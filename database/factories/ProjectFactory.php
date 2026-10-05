@@ -23,6 +23,11 @@ class ProjectFactory extends Factory
             'path' => '/Users/'.fake()->userName().'/Projects/'.fake()->slug(2),
             'repository' => 'git@github.com:'.fake()->userName().'/'.fake()->slug(2).'.git',
             'information' => fake()->sentence(),
+            'url_local' => null,
+            'url_dev' => null,
+            'url_qa' => null,
+            'url_staging' => null,
+            'url_production' => null,
         ];
     }
 }

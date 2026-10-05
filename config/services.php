@@ -39,4 +39,15 @@ return [
         'socket' => env('DOCKER_SOCKET', env('HOME').'/.docker/run/docker.sock'),
     ],
 
+    'caddy' => [
+        'binary' => env('CADDY_BINARY', '/opt/homebrew/bin/caddy'),
+        'config' => env('CADDY_CONFIG', env('HOME').'/caddy/Caddyfile'),
+        'admin' => env('CADDY_ADMIN', 'http://localhost:2019'),
+    ],
+
+    'ide' => [
+        // Shell command that opens a directory in the IDE; the project path is appended.
+        'command' => env('IDE_COMMAND', 'open -a "Visual Studio Code"'),
+    ],
+
 ];

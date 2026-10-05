@@ -29,6 +29,19 @@ export default defineConfig({
         }),
     ]),
     server: {
+        host: '127.0.0.1',
+        port: 5174,
+        strictPort: true,
+        // Caddy serves Vite over HTTPS at :5173 and proxies to :5174.
+        origin: 'https://super-poder-dev.test:5173',
+        // With `origin` set, laravel-vite-plugin would only allow that origin
+        // (port 5173) for CORS, blocking module scripts on the app itself.
+        cors: { origin: 'https://super-poder-dev.test' },
+        hmr: {
+            protocol: 'wss',
+            host: 'super-poder-dev.test',
+            clientPort: 5173,
+        },
         watch: {
             ignored: [
                 '**/.agents/**',

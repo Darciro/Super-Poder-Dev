@@ -4,6 +4,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Services\TerminalSessions;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
 use Inertia\Testing\AssertableInertia as Assert;
 use Mockery\MockInterface;
 
@@ -135,3 +136,46 @@ test('guests cannot delete projects', function () {
 
     expect(Project::count())->toBe(1);
 });
+
+test('a project path is opened in the configured ide', function () {
+    Process::fake();
+    config(['services.ide.command' => 'code']);
+    Project::factory()->create(['project' => 'app', 'path' => sys_get_temp_dir()]);
+
+    $this->from(route('dashboard'))
+        ->post(route('dashboard.projects.open-ide', 'app'))
+        ->assertRedirect(route('dashboard'));
+
+    Process::assertRan(fn ($process) => $process->command === 'code '.escapeshellarg(sys_get_temp_dir()));
+});
+
+test('a project without a local path is not opened in the ide', function () {
+    Process::fake();
+    Project::factory()->create(['project' => 'app', 'path' => null]);
+
+    $this->post(route('dashboard.projects.open-ide', 'app'));
+
+    Process::assertNothingRan();
+});
+
+test('environment urls are saved with the project details', function () {
+    $this->put(route('dashboard.projects.update', 'pbtv'), [
+        'url_local' => 'http://localhost:8000',
+        'url_dev' => 'http://pbtv.test',
+        'url_qa' => 'https://qa.pbtv.com',
+        'url_staging' => '',
+        'url_production' => 'https://pbtv.com',
+    ])->assertSessionHasNoErrors();
+
+    expect(Project::firstWhere('project', 'pbtv'))
+        ->url_local->toBe('http://localhost:8000')
+        ->url_dev->toBe('http://pbtv.test')
+        ->url_qa->toBe('https://qa.pbtv.com')
+        ->url_staging->toBeNull()
+        ->url_production->toBe('https://pbtv.com');
+});
+
+test('environment urls must be http or https urls', function (string $url) {
+    $this->put(route('dashboard.projects.update', 'pbtv'), ['url_production' => $url])
+        ->assertSessionHasErrors('url_production');
+})->with(['not a url', 'javascript:alert(1)', 'ftp://pbtv.com']);

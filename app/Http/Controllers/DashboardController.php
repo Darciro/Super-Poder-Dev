@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Project;
+use App\Services\Caddy;
 use App\Services\Docker;
+use App\Services\LocalServers;
 use App\Services\TerminalSessions;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Pool;
@@ -22,12 +24,14 @@ class DashboardController extends Controller
 
     public function __construct(private Docker $docker) {}
 
-    public function index(TerminalSessions $terminals): Response
+    public function index(TerminalSessions $terminals, LocalServers $servers, Caddy $caddy): Response
     {
         return Inertia::render('dashboard', [
             'containers' => $this->containers(),
             'host' => $this->host(),
             'terminals' => $terminals->active(),
+            'localServers' => $servers->running(),
+            'caddy' => $caddy->status(),
             // Stats take ~1s per container (Docker samples CPU twice), so load them after the page.
             'stats' => Inertia::defer(fn () => $this->stats()),
         ]);
@@ -67,6 +71,20 @@ class DashboardController extends Controller
     }
 
     /**
+     * Start or stop the Caddy reverse proxy.
+     */
+    public function caddyAction(Caddy $caddy, string $action): RedirectResponse
+    {
+        if ($action === 'start' ? $caddy->start() : $caddy->stop()) {
+            Inertia::flash('toast', ['type' => 'success', 'message' => $action === 'start' ? 'Caddy started.' : 'Caddy stopped.']);
+        } else {
+            Inertia::flash('toast', ['type' => 'error', 'message' => "Failed to {$action} Caddy."]);
+        }
+
+        return back();
+    }
+
+    /**
      * Docker Desktop containers grouped by Docker Compose project, plus the saved
      * projects without containers (local projects, or Compose projects that are down).
      *
@@ -92,7 +110,10 @@ class DashboardController extends Controller
             ->sortBy(fn ($containers, string $project) => $project === '' ? 1 : 0)
             ->map(fn (array $containers, string $project) => [
                 'project' => $project === '' ? null : $project,
-                'details' => $projects->get($project)?->only(['name', 'path', 'repository', 'information']),
+                'details' => $projects->get($project)?->only([
+                    'name', 'path', 'repository', 'information',
+                    'url_local', 'url_dev', 'url_qa', 'url_staging', 'url_production',
+                ]),
                 'containers' => $containers,
             ])
             ->values()

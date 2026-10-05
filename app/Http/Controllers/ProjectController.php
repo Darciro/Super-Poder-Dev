@@ -7,6 +7,7 @@ use App\Services\TerminalSessions;
 use Closure;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Process;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 
@@ -16,6 +17,11 @@ class ProjectController extends Controller
      * Same format as Docker Compose project names (also used in URLs and file paths).
      */
     public const PROJECT_PATTERN = '[a-z0-9][a-z0-9_-]*';
+
+    /**
+     * Environments with a URL in the project details (url_<environment> columns).
+     */
+    public const ENVIRONMENTS = ['local', 'dev', 'qa', 'staging', 'production'];
 
     /**
      * Add a local project (one that doesn't run in Docker).
@@ -66,6 +72,29 @@ class ProjectController extends Controller
     }
 
     /**
+     * Open the project's local path in the IDE (IDE_COMMAND, VS Code by default).
+     */
+    public function openInIde(string $project): RedirectResponse
+    {
+        $path = Project::where('project', $project)->value('path');
+
+        if (! $path || ! is_dir($path)) {
+            Inertia::flash('toast', ['type' => 'error', 'message' => 'This project has no local path on this machine.']);
+
+            return back();
+        }
+
+        // Under `php artisan serve` child processes get an almost empty environment: hand over the real one.
+        $result = Process::env(getenv())->run(config('services.ide.command').' '.escapeshellarg($path));
+
+        Inertia::flash('toast', $result->successful()
+            ? ['type' => 'success', 'message' => 'Opening in the IDE…']
+            : ['type' => 'error', 'message' => 'Could not open the IDE: '.(trim($result->errorOutput()) ?: 'check IDE_COMMAND.')]);
+
+        return back();
+    }
+
+    /**
      * @return array<string, array<int, mixed>>
      */
     private function rules(): array
@@ -85,6 +114,9 @@ class ProjectController extends Controller
             ],
             'repository' => ['nullable', 'string', 'max:1024'],
             'information' => ['nullable', 'string', 'max:10000'],
+            ...collect(self::ENVIRONMENTS)
+                ->mapWithKeys(fn (string $environment) => ["url_{$environment}" => ['nullable', 'url:http,https', 'max:2048']])
+                ->all(),
         ];
     }
 
@@ -93,7 +125,10 @@ class ProjectController extends Controller
      */
     private function messages(): array
     {
-        return ['path.starts_with' => 'The path must be absolute (start with /).'];
+        return [
+            'path.starts_with' => 'The path must be absolute (start with /).',
+            'url_*.url' => 'Enter a full URL, starting with http:// or https://.',
+        ];
     }
 
     /**

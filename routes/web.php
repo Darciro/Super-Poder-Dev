@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\TerminalController;
 use Illuminate\Support\Facades\Route;
@@ -12,6 +13,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('dashboard/containers/{container}/{action}', [DashboardController::class, 'containerAction'])
         ->where(['container' => '[a-zA-Z0-9][a-zA-Z0-9_.-]*', 'action' => 'start|stop|restart'])
         ->name('dashboard.containers.action');
+    Route::post('dashboard/caddy/{action}', [DashboardController::class, 'caddyAction'])
+        ->whereIn('action', ['start', 'stop'])
+        ->name('dashboard.caddy.action');
 
     Route::post('dashboard/projects', [ProjectController::class, 'store'])->name('dashboard.projects.store');
     Route::put('dashboard/projects/{project}', [ProjectController::class, 'update'])
@@ -20,6 +24,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::delete('dashboard/projects/{project}', [ProjectController::class, 'destroy'])
         ->where('project', ProjectController::PROJECT_PATTERN)
         ->name('dashboard.projects.destroy');
+    Route::post('dashboard/projects/{project}/open-ide', [ProjectController::class, 'openInIde'])
+        ->where('project', ProjectController::PROJECT_PATTERN)
+        ->name('dashboard.projects.open-ide');
+
+    Route::resource('documentation', DocumentController::class)
+        ->parameters(['documentation' => 'document']);
+    Route::get('documentation/{document}/delete', [DocumentController::class, 'delete'])
+        ->name('documentation.delete');
 
     $terminalRoutes = function () {
         Route::post('/', 'store')->name('store');

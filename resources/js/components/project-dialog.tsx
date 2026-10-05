@@ -15,13 +15,27 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 
 export type ProjectDetails = {
     name: string | null;
     path: string | null;
     repository: string | null;
     information: string | null;
+    url_local: string | null;
+    url_dev: string | null;
+    url_qa: string | null;
+    url_staging: string | null;
+    url_production: string | null;
 };
+
+export const ENVIRONMENTS = [
+    { key: 'url_local', label: 'Local' },
+    { key: 'url_dev', label: 'Dev' },
+    { key: 'url_qa', label: 'QA' },
+    { key: 'url_staging', label: 'Staging' },
+    { key: 'url_production', label: 'Production' },
+] as const;
 
 type Props = {
     /** Project to edit; omitted to add a new local project. */
@@ -52,7 +66,7 @@ export function ProjectDialog({ project, details, open, onOpenChange }: Props) {
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-xl">
+            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
                 <DialogHeader>
                     <DialogTitle>
                         {editing ? `Project · ${project}` : 'Add local project'}
@@ -150,6 +164,44 @@ export function ProjectDialog({ project, details, open, onOpenChange }: Props) {
                                 />
                                 <InputError message={errors.repository} />
                             </div>
+
+                            <fieldset className="grid gap-3">
+                                <legend className="mb-2 text-sm font-medium">
+                                    Environment URLs
+                                </legend>
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    {ENVIRONMENTS.map(({ key, label }) => (
+                                        <div
+                                            key={key}
+                                            className={cn(
+                                                'grid gap-1.5',
+                                                key === 'url_production' &&
+                                                    'sm:col-span-2',
+                                            )}
+                                        >
+                                            <Label
+                                                htmlFor={key}
+                                                className="text-xs text-muted-foreground"
+                                            >
+                                                {label}
+                                            </Label>
+                                            <Input
+                                                id={key}
+                                                name={key}
+                                                type="url"
+                                                defaultValue={
+                                                    details?.[key] ?? ''
+                                                }
+                                                placeholder="https://"
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                className="font-mono"
+                                            />
+                                            <InputError message={errors[key]} />
+                                        </div>
+                                    ))}
+                                </div>
+                            </fieldset>
 
                             <div className="grid gap-2">
                                 <Label htmlFor="information">Information</Label>
