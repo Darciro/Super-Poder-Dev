@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Project;
+use App\Services\IntegrationSettings;
+use App\Services\ShellEnvironment;
 use App\Services\TerminalSessions;
 use Closure;
 use Illuminate\Http\RedirectResponse;
@@ -72,9 +74,9 @@ class ProjectController extends Controller
     }
 
     /**
-     * Open the project's local path in the IDE (IDE_COMMAND, VS Code by default).
+     * Open the project's local path in the IDE (the IDE command in the settings, VS Code by default).
      */
-    public function openInIde(string $project): RedirectResponse
+    public function openInIde(ShellEnvironment $shell, IntegrationSettings $settings, string $project): RedirectResponse
     {
         $path = Project::where('project', $project)->value('path');
 
@@ -84,12 +86,12 @@ class ProjectController extends Controller
             return back();
         }
 
-        // Under `php artisan serve` child processes get an almost empty environment: hand over the real one.
-        $result = Process::env(getenv())->run(config('services.ide.command').' '.escapeshellarg($path));
+        // As if run from the user's terminal: their PATH, and none of this app's variables.
+        $result = Process::env($shell->replacing())->run($settings->get('ide_command').' '.escapeshellarg($path));
 
         Inertia::flash('toast', $result->successful()
             ? ['type' => 'success', 'message' => 'Opening in the IDE…']
-            : ['type' => 'error', 'message' => 'Could not open the IDE: '.(trim($result->errorOutput()) ?: 'check IDE_COMMAND.')]);
+            : ['type' => 'error', 'message' => 'Could not open the IDE: '.(trim($result->errorOutput()) ?: 'check the IDE command in Settings → Integrations.')]);
 
         return back();
     }

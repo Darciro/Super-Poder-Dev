@@ -1,5 +1,5 @@
-import { Deferred, Head, router, usePoll } from "@inertiajs/react";
-import type { LucideIcon } from "lucide-react";
+import { Deferred, Head, router, usePoll } from '@inertiajs/react';
+import type { LucideIcon } from 'lucide-react';
 import {
     ArrowDown,
     ArrowUp,
@@ -20,31 +20,31 @@ import {
     Square,
     Trash2,
     SquareTerminal,
-} from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
-import { TerminalDialog } from "@/components/terminal-dialog";
-import { DeleteProjectDialog } from "@/components/delete-project-dialog";
-import { ENVIRONMENTS, ProjectDialog } from "@/components/project-dialog";
-import type { ProjectDetails } from "@/components/project-dialog";
-import { Button } from "@/components/ui/button";
+} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
+import { TerminalDialog } from '@/components/terminal-dialog';
+import { DeleteProjectDialog } from '@/components/delete-project-dialog';
+import { ENVIRONMENTS, ProjectDialog } from '@/components/project-dialog';
+import type { ProjectDetails } from '@/components/project-dialog';
+import { Button } from '@/components/ui/button';
 import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
-import { cn } from "@/lib/utils";
-import { dashboard } from "@/routes";
-import { action as caddyAction } from "@/routes/dashboard/caddy";
-import { action as containerAction } from "@/routes/dashboard/containers";
-import { openIde } from "@/routes/dashboard/projects";
-import * as containerTerminal from "@/routes/dashboard/containers/terminal";
-import * as projectTerminal from "@/routes/dashboard/projects/terminal";
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
+import { cn } from '@/lib/utils';
+import { dashboard } from '@/routes';
+import { action as caddyAction } from '@/routes/dashboard/caddy';
+import { action as containerAction } from '@/routes/dashboard/containers';
+import { openIde } from '@/routes/dashboard/projects';
+import * as containerTerminal from '@/routes/dashboard/containers/terminal';
+import * as projectTerminal from '@/routes/dashboard/projects/terminal';
 
 type Port = {
     label: string;
@@ -106,7 +106,7 @@ type Stats = {
 };
 
 function formatBytes(bytes: number): string {
-    const units = ["B", "KB", "MB", "GB", "TB"];
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     let value = bytes;
     let unit = 0;
 
@@ -154,7 +154,7 @@ function Meter({
     return (
         <div
             className={cn(
-                "h-1.5 w-full overflow-hidden rounded-full bg-muted",
+                'h-1.5 w-full overflow-hidden rounded-full bg-muted',
                 className,
             )}
         >
@@ -194,7 +194,7 @@ function Resources({
                             {stats.cpu.toFixed(1)}%
                             {host && (
                                 <span className="text-muted-foreground">
-                                    {" "}
+                                    {' '}
                                     of {host.cpus} CPUs
                                 </span>
                             )}
@@ -213,7 +213,7 @@ function Resources({
                             {formatBytes(stats.memory)}
                             {host && (
                                 <span className="text-muted-foreground">
-                                    {" "}
+                                    {' '}
                                     / {formatBytes(host.memory)}
                                 </span>
                             )}
@@ -228,13 +228,13 @@ function Resources({
             </div>
             {stats.top.length > 0 && (
                 <p className="truncate text-sm text-muted-foreground">
-                    Top:{" "}
+                    Top:{' '}
                     {stats.top
                         .map(
                             (container) =>
                                 `${container.name} ${formatBytes(container.memory)}`,
                         )
-                        .join(" · ")}
+                        .join(' · ')}
                 </p>
             )}
         </>
@@ -257,7 +257,7 @@ function CaddyCard({ caddy }: { caddy: CaddyStatus }) {
         (a, b) => a - b,
     );
 
-    const run = (action: "start" | "stop") => {
+    const run = (action: 'start' | 'stop') => {
         router.post(
             caddyAction({ action }),
             {},
@@ -276,27 +276,27 @@ function CaddyCard({ caddy }: { caddy: CaddyStatus }) {
                     <p className="text-3xl font-semibold tabular-nums">
                         {caddy.sites.length}
                         <span className="text-lg font-normal text-muted-foreground">
-                            {" "}
-                            {caddy.sites.length === 1 ? "host" : "hosts"}
+                            {' '}
+                            {caddy.sites.length === 1 ? 'host' : 'hosts'}
                         </span>
                     </p>
                     <span
                         className={cn(
-                            "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
+                            'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium',
                             caddy.running
-                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                                : "bg-muted text-muted-foreground",
+                                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                                : 'bg-muted text-muted-foreground',
                         )}
                     >
                         <span
                             className={cn(
-                                "size-1.5 rounded-full",
+                                'size-1.5 rounded-full',
                                 caddy.running
-                                    ? "bg-emerald-500"
-                                    : "bg-muted-foreground",
+                                    ? 'bg-emerald-500'
+                                    : 'bg-muted-foreground',
                             )}
                         />
-                        {caddy.running ? "Running" : "Stopped"}
+                        {caddy.running ? 'Running' : 'Stopped'}
                     </span>
                 </div>
                 {caddy.exists ? (
@@ -304,27 +304,27 @@ function CaddyCard({ caddy }: { caddy: CaddyStatus }) {
                         {caddy.sites.map((site) => (
                             <a
                                 key={site.address}
-                                href={`${site.port === 80 ? "http" : "https"}://${site.host}${[80, 443].includes(site.port) ? "" : `:${site.port}`}`}
+                                href={`${site.port === 80 ? 'http' : 'https'}://${site.host}${[80, 443].includes(site.port) ? '' : `:${site.port}`}`}
                                 target="_blank"
                                 rel="noreferrer"
-                                title={`${site.address} → ${site.upstreams.join(", ") || "no reverse_proxy"}`}
+                                title={`${site.address} → ${site.upstreams.join(', ') || 'no reverse_proxy'}`}
                                 className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground hover:underline"
                             >
                                 :{site.port}
                                 <span className="text-muted-foreground">
-                                    →{" "}
+                                    →{' '}
                                     {site.upstreams
                                         .map((upstream) =>
-                                            upstream.split(":").pop(),
+                                            upstream.split(':').pop(),
                                         )
-                                        .join(", ") || "—"}
+                                        .join(', ') || '—'}
                                 </span>
                             </a>
                         ))}
                     </div>
                 ) : (
                     <p className="text-sm text-muted-foreground">
-                        Caddyfile not found at{" "}
+                        Caddyfile not found at{' '}
                         <span className="font-mono">{caddy.config}</span>.
                     </p>
                 )}
@@ -335,15 +335,15 @@ function CaddyCard({ caddy }: { caddy: CaddyStatus }) {
                     title={caddy.config}
                 >
                     {ports.length > 0
-                        ? `Ports ${ports.join(", ")}`
-                        : "No ports"}
+                        ? `Ports ${ports.join(', ')}`
+                        : 'No ports'}
                 </p>
                 {caddy.running ? (
                     <Button
                         variant="outline"
                         size="sm"
                         disabled={processing}
-                        onClick={() => run("stop")}
+                        onClick={() => run('stop')}
                     >
                         {processing ? <Spinner /> : <Square />}
                         Stop
@@ -353,7 +353,7 @@ function CaddyCard({ caddy }: { caddy: CaddyStatus }) {
                         variant="outline"
                         size="sm"
                         disabled={processing || !caddy.exists}
-                        onClick={() => run("start")}
+                        onClick={() => run('start')}
                     >
                         {processing ? <Spinner /> : <Play />}
                         Start
@@ -364,7 +364,7 @@ function CaddyCard({ caddy }: { caddy: CaddyStatus }) {
     );
 }
 
-type ContainerActionName = "start" | "stop" | "restart";
+type ContainerActionName = 'start' | 'stop' | 'restart';
 
 function ContainerActions({
     container,
@@ -374,7 +374,7 @@ function ContainerActions({
     onTerminal: () => void;
 }) {
     const [processing, setProcessing] = useState(false);
-    const running = container.state === "running";
+    const running = container.state === 'running';
 
     const run = (action: ContainerActionName) => {
         router.post(
@@ -403,17 +403,17 @@ function ContainerActions({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
                 {running ? (
-                    <DropdownMenuItem onSelect={() => run("stop")}>
+                    <DropdownMenuItem onSelect={() => run('stop')}>
                         <Square />
                         Stop
                     </DropdownMenuItem>
                 ) : (
-                    <DropdownMenuItem onSelect={() => run("start")}>
+                    <DropdownMenuItem onSelect={() => run('start')}>
                         <Play />
                         Start
                     </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onSelect={() => run("restart")}>
+                <DropdownMenuItem onSelect={() => run('restart')}>
                     <RotateCw />
                     Restart
                 </DropdownMenuItem>
@@ -426,17 +426,17 @@ function ContainerActions({
     );
 }
 
-const ENVIRONMENT_STYLES: Record<(typeof ENVIRONMENTS)[number]["key"], string> =
+const ENVIRONMENT_STYLES: Record<(typeof ENVIRONMENTS)[number]['key'], string> =
     {
         url_local:
-            "border-slate-500/30 bg-slate-500/10 text-slate-700 hover:bg-slate-500/20 dark:text-slate-300",
+            'border-slate-500/30 bg-slate-500/10 text-slate-700 hover:bg-slate-500/20 dark:text-slate-300',
         url_dev:
-            "border-sky-500/30 bg-sky-500/10 text-sky-700 hover:bg-sky-500/20 dark:text-sky-300",
-        url_qa: "border-violet-500/30 bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-300",
+            'border-sky-500/30 bg-sky-500/10 text-sky-700 hover:bg-sky-500/20 dark:text-sky-300',
+        url_qa: 'border-violet-500/30 bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-300',
         url_staging:
-            "border-amber-500/30 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300",
+            'border-amber-500/30 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300',
         url_production:
-            "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300",
+            'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300',
     };
 
 function hostname(url: string): string {
@@ -483,7 +483,7 @@ function EnvironmentLinks({
                                 key={key}
                                 asChild
                                 className={cn(
-                                    "flex cursor-pointer flex-col items-start gap-0.5 rounded-lg border px-3 py-2",
+                                    'flex cursor-pointer flex-col items-start gap-0.5 rounded-lg border px-3 py-2',
                                     ENVIRONMENT_STYLES[key],
                                 )}
                             >
@@ -568,28 +568,28 @@ function ProjectActions({
 
 // Remembers the open terminal so it reopens after a page reload:
 // a container id, or "project:{name}" for a project's local terminal.
-const TERMINAL_STORAGE_KEY = "dashboard.terminal";
-const PROJECT_TERMINAL_PREFIX = "project:";
+const TERMINAL_STORAGE_KEY = 'dashboard.terminal';
+const PROJECT_TERMINAL_PREFIX = 'project:';
 
 const SESSION_NOTE =
-    "The session keeps running when you close this window or reload the page.";
+    'The session keeps running when you close this window or reload the page.';
 
-type SortColumn = "name" | "image" | "state" | "ports";
-type Sort = { column: SortColumn; direction: "asc" | "desc" } | null;
+type SortColumn = 'name' | 'image' | 'state' | 'ports';
+type Sort = { column: SortColumn; direction: 'asc' | 'desc' } | null;
 
-const SORT_STORAGE_KEY = "dashboard.sort";
-const COLLAPSED_STORAGE_KEY = "dashboard.collapsed";
+const SORT_STORAGE_KEY = 'dashboard.sort';
+const COLLAPSED_STORAGE_KEY = 'dashboard.collapsed';
 
-const STANDALONE_KEY = "__standalone";
+const STANDALONE_KEY = '__standalone';
 
 // "asc" lists healthy containers first.
 const STATE_ORDER = [
-    "running",
-    "restarting",
-    "paused",
-    "created",
-    "exited",
-    "dead",
+    'running',
+    'restarting',
+    'paused',
+    'created',
+    'exited',
+    'dead',
 ];
 
 function lowestPort(ports: Port[]): number | null {
@@ -603,16 +603,16 @@ function containerSortValue(
     column: SortColumn,
 ): string | number | null {
     switch (column) {
-        case "name":
+        case 'name':
             return (container.service ?? container.name).toLowerCase();
-        case "image":
+        case 'image':
             return container.image.toLowerCase();
-        case "state": {
+        case 'state': {
             const index = STATE_ORDER.indexOf(container.state);
 
             return index === -1 ? STATE_ORDER.length : index;
         }
-        case "ports":
+        case 'ports':
             return lowestPort(container.ports);
     }
 }
@@ -624,22 +624,22 @@ function groupSortValue(
     const { containers } = group;
 
     switch (column) {
-        case "name":
-            return (group.details?.name ?? group.project ?? "").toLowerCase();
-        case "image":
+        case 'name':
+            return (group.details?.name ?? group.project ?? '').toLowerCase();
+        case 'image':
             return (
                 containers
                     .map((container) => container.image.toLowerCase())
                     .sort()[0] ?? null
             );
-        case "state":
+        case 'state':
             // Share of containers running, negated so "asc" lists the healthiest first.
             return containers.length > 0
                 ? -containers.filter(
-                      (container) => container.state === "running",
+                      (container) => container.state === 'running',
                   ).length / containers.length
                 : null;
-        case "ports":
+        case 'ports':
             return lowestPort(
                 containers.flatMap((container) => container.ports),
             );
@@ -652,7 +652,7 @@ function groupSortValue(
 function compare(
     a: string | number | null,
     b: string | number | null,
-    direction: "asc" | "desc",
+    direction: 'asc' | 'desc',
 ): number {
     if (a === b) {
         return 0;
@@ -667,11 +667,11 @@ function compare(
     }
 
     const result =
-        typeof a === "number" && typeof b === "number"
+        typeof a === 'number' && typeof b === 'number'
             ? a - b
             : String(a).localeCompare(String(b), undefined, { numeric: true });
 
-    return direction === "asc" ? result : -result;
+    return direction === 'asc' ? result : -result;
 }
 
 /**
@@ -721,9 +721,9 @@ function SortableHeader({
 }) {
     const direction = sort?.column === column ? sort.direction : null;
     const Icon =
-        direction === "asc"
+        direction === 'asc'
             ? ArrowUp
-            : direction === "desc"
+            : direction === 'desc'
               ? ArrowDown
               : ArrowUpDown;
 
@@ -731,11 +731,11 @@ function SortableHeader({
         <th
             className="p-3 font-medium"
             aria-sort={
-                direction === "asc"
-                    ? "ascending"
-                    : direction === "desc"
-                      ? "descending"
-                      : "none"
+                direction === 'asc'
+                    ? 'ascending'
+                    : direction === 'desc'
+                      ? 'descending'
+                      : 'none'
             }
         >
             <button
@@ -746,10 +746,10 @@ function SortableHeader({
                 {children}
                 <Icon
                     className={cn(
-                        "size-3.5",
+                        'size-3.5',
                         direction
-                            ? "text-foreground"
-                            : "text-muted-foreground/60",
+                            ? 'text-foreground'
+                            : 'text-muted-foreground/60',
                     )}
                 />
             </button>
@@ -765,7 +765,7 @@ function containerMatches(container: Container, term: string): boolean {
 
 function groupMatches(group: ContainerGroup, term: string): boolean {
     return (
-        [group.project ?? "standalone", group.details?.name ?? ""].some(
+        [group.project ?? 'standalone', group.details?.name ?? ''].some(
             (value) => value.toLowerCase().includes(term),
         ) ||
         group.containers.some((container) => containerMatches(container, term))
@@ -853,12 +853,12 @@ export default function Dashboard({
     // Keep the cards and table in sync with Docker.
     const { start: startPolling, stop: stopPolling } = usePoll(15000, {
         only: [
-            "containers",
-            "host",
-            "stats",
-            "terminals",
-            "localServers",
-            "caddy",
+            'containers',
+            'host',
+            'stats',
+            'terminals',
+            'localServers',
+            'caddy',
         ],
     });
 
@@ -875,7 +875,7 @@ export default function Dashboard({
     const summary = useMemo(() => {
         const all = containers.flatMap((group) => group.containers);
         const running = all.filter(
-            (container) => container.state === "running",
+            (container) => container.state === 'running',
         ).length;
         const ports = all.flatMap((container) => container.ports);
 
@@ -890,7 +890,7 @@ export default function Dashboard({
         };
     }, [containers]);
 
-    const [search, setSearch] = useState("");
+    const [search, setSearch] = useState('');
     const term = search.trim().toLowerCase();
 
     const [sort, setSort] = useState<Sort>(null);
@@ -940,9 +940,9 @@ export default function Dashboard({
     const toggleSort = (column: SortColumn) => {
         const next: Sort =
             sort?.column !== column
-                ? { column, direction: "asc" }
-                : sort.direction === "asc"
-                  ? { column, direction: "desc" }
+                ? { column, direction: 'asc' }
+                : sort.direction === 'asc'
+                  ? { column, direction: 'desc' }
                   : null;
 
         setSort(next);
@@ -963,7 +963,7 @@ export default function Dashboard({
     const groups = useMemo(() => {
         const sorted = sortGroups(containers, sort);
 
-        if (term === "") {
+        if (term === '') {
             return sorted.map((group) => ({ group, matches: true }));
         }
 
@@ -988,7 +988,7 @@ export default function Dashboard({
                             <p className="text-3xl font-semibold tabular-nums">
                                 {summary.running}
                                 <span className="text-lg font-normal text-muted-foreground">
-                                    {" "}
+                                    {' '}
                                     / {summary.total} running
                                 </span>
                             </p>
@@ -999,8 +999,8 @@ export default function Dashboard({
                             />
                         </div>
                         <p className="text-sm text-muted-foreground">
-                            {summary.stopped} stopped · {summary.projects}{" "}
-                            {summary.projects === 1 ? "project" : "projects"}
+                            {summary.stopped} stopped · {summary.projects}{' '}
+                            {summary.projects === 1 ? 'project' : 'projects'}
                         </p>
                     </StatCard>
 
@@ -1015,13 +1015,13 @@ export default function Dashboard({
                             <p className="text-3xl font-semibold tabular-nums">
                                 {summary.ports}
                                 <span className="text-lg font-normal text-muted-foreground">
-                                    {" "}
+                                    {' '}
                                     open
                                 </span>
                             </p>
                             <p className="mt-1 text-sm text-muted-foreground">
-                                {summary.webApps}{" "}
-                                {summary.webApps === 1 ? "web app" : "web apps"}{" "}
+                                {summary.webApps}{' '}
+                                {summary.webApps === 1 ? 'web app' : 'web apps'}{' '}
                                 reachable in the browser
                             </p>
                             {localServers.length > 0 && (
@@ -1036,14 +1036,14 @@ export default function Dashboard({
                                             href={server.url}
                                             target="_blank"
                                             rel="noreferrer"
-                                            title={`php -S ${server.address}${server.path ? ` · ${server.path}` : ""} (PID ${server.pid})`}
+                                            title={`php -S ${server.address}${server.path ? ` · ${server.path}` : ''} (PID ${server.pid})`}
                                             className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground hover:underline"
                                         >
                                             {server.name ?? server.address}
                                             <span className="text-muted-foreground">
                                                 :
                                                 {server.address
-                                                    .split(":")
+                                                    .split(':')
                                                     .pop()}
                                             </span>
                                         </a>
@@ -1053,8 +1053,8 @@ export default function Dashboard({
                         </div>
                         {host && (
                             <p className="text-sm text-muted-foreground">
-                                {host.os} {host.version} · {host.cpus} CPUs ·{" "}
-                                {formatBytes(host.memory)} · {host.images}{" "}
+                                {host.os} {host.version} · {host.cpus} CPUs ·{' '}
+                                {formatBytes(host.memory)} · {host.images}{' '}
                                 images
                             </p>
                         )}
@@ -1076,7 +1076,7 @@ export default function Dashboard({
                     </div>
                     <Button
                         variant="outline"
-                        onClick={() => setDialogProject("")}
+                        onClick={() => setDialogProject('')}
                     >
                         <Plus />
                         Add local project
@@ -1129,7 +1129,7 @@ export default function Dashboard({
                             {groups.map(({ group, matches }) => {
                                 const running = group.containers.filter(
                                     (container) =>
-                                        container.state === "running",
+                                        container.state === 'running',
                                 ).length;
                                 const groupKey =
                                     group.project ?? STANDALONE_KEY;
@@ -1141,10 +1141,10 @@ export default function Dashboard({
                                         className={
                                             matches
                                                 ? undefined
-                                                : "opacity-40 transition-opacity"
+                                                : 'opacity-40 transition-opacity'
                                         }
                                     >
-                                        <tr className="align-middle border-b border-sidebar-border/70 bg-muted/50 hover:bg-muted/60 hdark:border-sidebar-border">
+                                        <tr className="hdark:border-sidebar-border border-b border-sidebar-border/70 bg-muted/50 align-middle hover:bg-muted/60">
                                             <td
                                                 colSpan={5}
                                                 className="relative p-3 font-semibold"
@@ -1157,14 +1157,14 @@ export default function Dashboard({
                                                         )
                                                     }
                                                     aria-expanded={expanded}
-                                                    aria-label={`${expanded ? "Collapse" : "Expand"} ${group.project ?? "Standalone"}`}
+                                                    aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group.project ?? 'Standalone'}`}
                                                     className="mr-1.5 -ml-1 inline-flex size-6 items-center justify-center rounded align-middle text-muted-foreground hover:bg-muted hover:text-foreground"
                                                 >
                                                     <ChevronRight
                                                         className={cn(
-                                                            "size-4 transition-transform",
+                                                            'size-4 transition-transform',
                                                             expanded &&
-                                                                "rotate-90",
+                                                                'rotate-90',
                                                         )}
                                                     />
                                                 </button>
@@ -1176,7 +1176,7 @@ export default function Dashboard({
                                                             group.project}
                                                     </EnvironmentLinks>
                                                 ) : (
-                                                    "Standalone"
+                                                    'Standalone'
                                                 )}
                                                 {group.details?.name && (
                                                     <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">
@@ -1186,7 +1186,7 @@ export default function Dashboard({
                                                 <span className="ml-2 font-normal text-muted-foreground">
                                                     {group.containers.length > 0
                                                         ? `${running}/${group.containers.length} running`
-                                                        : "no containers"}
+                                                        : 'no containers'}
                                                 </span>
                                                 {group.project &&
                                                     terminals.includes(
@@ -1269,7 +1269,7 @@ export default function Dashboard({
                                                 (container) => (
                                                     <tr
                                                         key={container.id}
-                                                        className="align-middle border-b border-sidebar-border/70 dark:border-sidebar-border hover:bg-muted/10"
+                                                        className="border-b border-sidebar-border/70 align-middle hover:bg-muted/10 dark:border-sidebar-border"
                                                     >
                                                         <td className="p-3 pl-6 font-medium">
                                                             {container.service ??
@@ -1306,9 +1306,9 @@ export default function Dashboard({
                                                             <span
                                                                 className={
                                                                     container.state ===
-                                                                    "running"
-                                                                        ? "text-green-600 dark:text-green-400"
-                                                                        : "text-muted-foreground"
+                                                                    'running'
+                                                                        ? 'text-green-600 dark:text-green-400'
+                                                                        : 'text-muted-foreground'
                                                                 }
                                                             >
                                                                 {
@@ -1323,7 +1323,7 @@ export default function Dashboard({
                                                             {container.ports
                                                                 .length ===
                                                             0 ? (
-                                                                "—"
+                                                                '—'
                                                             ) : (
                                                                 <div className="flex flex-col gap-1">
                                                                     {container.ports.map(
@@ -1344,7 +1344,7 @@ export default function Dashboard({
                                                                                 >
                                                                                     {port.url.replace(
                                                                                         /^https?:\/\//,
-                                                                                        "",
+                                                                                        '',
                                                                                     )}
                                                                                 </a>
                                                                             ) : (
@@ -1385,7 +1385,7 @@ export default function Dashboard({
                 </div>
             </div>
             {dialogProject !== null &&
-                (dialogProject === "" || dialogGroup) && (
+                (dialogProject === '' || dialogGroup) && (
                     <ProjectDialog
                         key={dialogProject}
                         project={dialogGroup?.project ?? undefined}
@@ -1424,7 +1424,7 @@ export default function Dashboard({
                         if (!open) {
                             openTerminal(null);
                             // Refresh the session markers in the table.
-                            router.reload({ only: ["terminals"] });
+                            router.reload({ only: ['terminals'] });
                         }
                     }}
                 />
@@ -1436,7 +1436,7 @@ export default function Dashboard({
 Dashboard.layout = {
     breadcrumbs: [
         {
-            title: "Dashboard",
+            title: 'Dashboard',
             href: dashboard(),
         },
     ],

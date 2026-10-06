@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Settings\DataController;
+use App\Http\Controllers\Settings\IntegrationsController;
 use App\Http\Controllers\Settings\ProfileController;
 use App\Http\Controllers\Settings\SecurityController;
 use Illuminate\Auth\Middleware\RequirePassword;
@@ -24,6 +26,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->name('user-password.update');
 
     Route::inertia('settings/appearance', 'settings/appearance')->name('appearance.edit');
+
+    Route::get('settings/integrations', [IntegrationsController::class, 'edit'])->name('integrations.edit');
+    Route::put('settings/integrations', [IntegrationsController::class, 'update'])->name('integrations.update');
+
+    Route::get('settings/data', [DataController::class, 'edit'])->name('data.edit');
+    Route::get('settings/data/export', [DataController::class, 'export'])->name('data.export');
+    Route::post('settings/data/import', [DataController::class, 'import'])->name('data.import');
 });
 
 Route::get('.well-known/passkey-endpoints', function () {

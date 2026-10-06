@@ -12,9 +12,11 @@ use Illuminate\Support\Facades\Process;
  */
 class Caddy
 {
+    public function __construct(private IntegrationSettings $settings) {}
+
     public function config(): string
     {
-        return config('services.caddy.config');
+        return $this->settings->get('caddy_config');
     }
 
     /**
@@ -60,7 +62,7 @@ class Caddy
         $command = sprintf(
             'HOME=%s %s start --config %s >> %s 2>&1',
             escapeshellarg((string) getenv('HOME')),
-            escapeshellarg(config('services.caddy.binary')),
+            escapeshellarg($this->settings->get('caddy_binary')),
             escapeshellarg($this->config()),
             escapeshellarg($log),
         );
@@ -97,7 +99,7 @@ class Caddy
         $current = [];
         $depth = 0;
 
-        foreach (preg_split('/\R/', $caddyfile) as $line) {
+        foreach (preg_split('/\R/', $caddyfile) ?: [] as $line) {
             $line = trim(preg_replace('/(^|\s)#.*$/', '', $line));
 
             if ($line === '') {
@@ -115,7 +117,7 @@ class Caddy
                 }
             } elseif ($depth > 0 && preg_match('/^reverse_proxy\s+(.+?)\s*\{?$/', $line, $matches)) {
                 foreach ($current as $address) {
-                    array_push($sites[$address], ...preg_split('/\s+/', $matches[1]));
+                    array_push($sites[$address], ...preg_split('/\s+/', $matches[1]) ?: []);
                 }
             }
 
@@ -143,7 +145,7 @@ class Caddy
      */
     private function addresses(string $label): array
     {
-        return array_values(array_filter(preg_split('/[\s,]+/', $label)));
+        return array_values(array_filter(preg_split('/[\s,]+/', $label) ?: []));
     }
 
     /**
@@ -164,6 +166,6 @@ class Caddy
 
     private function adminUrl(string $path): string
     {
-        return rtrim(config('services.caddy.admin'), '/').$path;
+        return rtrim($this->settings->get('caddy_admin'), '/').$path;
     }
 }

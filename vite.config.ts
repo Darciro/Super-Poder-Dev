@@ -36,7 +36,13 @@ export default defineConfig({
         origin: 'https://super-poder-dev.test:5173',
         // With `origin` set, laravel-vite-plugin would only allow that origin
         // (port 5173) for CORS, blocking module scripts on the app itself.
-        cors: { origin: 'https://super-poder-dev.test' },
+        // The desktop app (`native:run`) serves it at 127.0.0.1 on a free port.
+        cors: {
+            origin: [
+                'https://super-poder-dev.test',
+                /^http:\/\/127\.0\.0\.1:\d+$/,
+            ],
+        },
         hmr: {
             protocol: 'wss',
             host: 'super-poder-dev.test',

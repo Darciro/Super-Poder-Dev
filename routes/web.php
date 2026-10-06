@@ -2,11 +2,15 @@
 
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DocumentController;
+use App\Http\Controllers\NativeController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\TerminalController;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'welcome')->name('home');
+
+// Outside the auth group: links on the login screens open in the browser too.
+Route::post('native/open-external', [NativeController::class, 'openExternal'])->name('native.open-external');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');

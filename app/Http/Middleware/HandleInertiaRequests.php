@@ -42,6 +42,8 @@ class HandleInertiaRequests extends Middleware
                 'user' => $request->user(),
             ],
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
+            // Running in the desktop app: a single local user, without login or account security.
+            'desktop' => (bool) config('nativephp-internal.running'),
         ];
     }
 }

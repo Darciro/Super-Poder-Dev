@@ -118,6 +118,23 @@ test('the dashboard lists php servers running from the terminal', function () {
         );
 });
 
+test('the desktop app leaves its own server out of the php servers', function (bool $desktop, int $listed) {
+    inDesktopApp($desktop);
+    Http::fake();
+    Process::fake([
+        '*ps*' => Process::result(implode("\n", [
+            '  '.getmypid().' /Applications/SuperPoder.app/Contents/Resources/php -S 127.0.0.1:8100 server.php',
+            '  102 php -S 0.0.0.0:8001',
+        ])),
+        '*lsof*' => Process::result("p102\nfcwd\nn/Users/me/Projects/blog\n"),
+    ]);
+
+    $this->actingAs(User::factory()->create());
+
+    $this->get(route('dashboard'))
+        ->assertInertia(fn (Assert $page) => $page->has('localServers', $listed));
+})->with(['desktop app' => [true, 1], 'browser' => [false, 2]]);
+
 test('the dashboard shows the caddy hosts and status', function () {
     $caddyfile = tempnam(sys_get_temp_dir(), 'Caddyfile');
     file_put_contents($caddyfile, <<<'CADDY'

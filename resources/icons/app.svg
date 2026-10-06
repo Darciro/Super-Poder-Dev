@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- macOS app icon grid: 824×824 body with rounded corners, centered on a 1024 canvas. -->
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E4EAF2"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#background)"/>
+  <!-- The logo (public/favicon.svg), 100×100 scaled to 6.2 and centered. -->
+  <g transform="translate(202 202) scale(6.2)">
+    <path d="M50 4 L92 16 L88 58 Q84 80 50 96 Q16 80 12 58 L8 16 Z" fill="#0E447C"/>
+    <g fill="none" stroke="#FB5303" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="32,36 20,50 32,64"/>
+      <polyline points="68,36 80,50 68,64"/>
+    </g>
+    <polygon points="52,24 61,24 54,43 62,43 44,76 48,54 40,54" fill="#FFFFFF"/>
+  </g>
+</svg>

@@ -1,4 +1,4 @@
-import { Link } from '@inertiajs/react';
+import { Link, usePage } from '@inertiajs/react';
 import type { PropsWithChildren } from 'react';
 import Heading from '@/components/heading';
 import { Button } from '@/components/ui/button';
@@ -6,11 +6,13 @@ import { Separator } from '@/components/ui/separator';
 import { useCurrentUrl } from '@/hooks/use-current-url';
 import { cn, toUrl } from '@/lib/utils';
 import { edit as editAppearance } from '@/routes/appearance';
+import { edit as editData } from '@/routes/data';
+import { edit as editIntegrations } from '@/routes/integrations';
 import { edit } from '@/routes/profile';
 import { edit as editSecurity } from '@/routes/security';
 import type { NavItem } from '@/types';
 
-const sidebarNavItems: NavItem[] = [
+const sidebarNavItems: (NavItem & { desktop?: boolean })[] = [
     {
         title: 'Profile',
         href: edit(),
@@ -20,22 +22,38 @@ const sidebarNavItems: NavItem[] = [
         title: 'Security',
         href: editSecurity(),
         icon: null,
+        // Password, two-factor and passkeys: the desktop app has no login.
+        desktop: false,
     },
     {
         title: 'Appearance',
         href: editAppearance(),
         icon: null,
     },
+    {
+        title: 'Integrations',
+        href: editIntegrations(),
+        icon: null,
+    },
+    {
+        title: 'Data',
+        href: editData(),
+        icon: null,
+    },
 ];
 
 export default function SettingsLayout({ children }: PropsWithChildren) {
     const { isCurrentOrParentUrl } = useCurrentUrl();
+    const { desktop } = usePage().props;
+    const navItems = sidebarNavItems.filter(
+        (item) => !desktop || item.desktop !== false,
+    );
 
     return (
         <div className="px-4 py-6">
             <Heading
                 title="Settings"
-                description="Manage your profile and account settings"
+                description="Manage your profile, account and integrations"
             />
 
             <div className="flex flex-col lg:flex-row lg:space-x-12">
@@ -44,7 +62,7 @@ export default function SettingsLayout({ children }: PropsWithChildren) {
                         className="flex flex-col space-y-1 space-x-0"
                         aria-label="Settings"
                     >
-                        {sidebarNavItems.map((item, index) => (
+                        {navItems.map((item, index) => (
                             <Button
                                 key={`${toUrl(item.href)}-${index}`}
                                 size="sm"
