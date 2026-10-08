@@ -3,25 +3,16 @@ import {
     ArrowDown,
     ArrowUp,
     ArrowUpDown,
+    FilePlus,
     FileText,
-    MoreHorizontal,
     Pencil,
-    Plus,
     Search,
     Trash2,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Badge } from '@/components/ui/badge';
+import { IconButton } from '@/components/icon-button';
 import { Button } from '@/components/ui/button';
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import {
     create,
@@ -45,6 +36,14 @@ type SortColumn = 'title' | 'category' | 'updated_at';
 type Sort = { column: SortColumn; direction: 'asc' | 'desc' } | null;
 
 const SORT_STORAGE_KEY = 'documentation.sort';
+
+const ALL_CATEGORIES = '';
+
+const GRID =
+    'grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_auto] items-center gap-4';
+
+// Fixed width so the column legend lines up with the row actions.
+const ACTIONS_WIDTH = 'w-16';
 
 export function formatDate(iso: string): string {
     return new Date(iso).toLocaleString(undefined, {
@@ -81,13 +80,11 @@ function SortableHeader({
     column,
     sort,
     onSort,
-    className,
     children,
 }: {
     column: SortColumn;
     sort: Sort;
     onSort: (column: SortColumn) => void;
-    className?: string;
     children: ReactNode;
 }) {
     const direction = sort?.column === column ? sort.direction : null;
@@ -99,63 +96,174 @@ function SortableHeader({
               : ArrowUpDown;
 
     return (
-        <th
-            className={cn('p-3 font-medium', className)}
-            aria-sort={
-                direction === 'asc'
-                    ? 'ascending'
-                    : direction === 'desc'
-                      ? 'descending'
-                      : 'none'
-            }
-        >
+        <span>
             <button
                 type="button"
                 onClick={() => onSort(column)}
-                className="-mx-1 inline-flex items-center gap-1 rounded px-1 hover:text-foreground"
+                className="-mx-1 inline-flex items-center gap-1 rounded px-1 uppercase hover:text-foreground"
             >
                 {children}
                 <Icon
                     className={cn(
-                        'size-3.5',
+                        'size-3',
                         direction
                             ? 'text-foreground'
                             : 'text-muted-foreground/60',
                     )}
                 />
             </button>
-        </th>
+        </span>
     );
 }
 
-function DocumentActions({ document }: { document: DocumentSummary }) {
+function Toolbar({
+    search,
+    onSearch,
+    categories,
+    category,
+    onCategory,
+}: {
+    search: string;
+    onSearch: (value: string) => void;
+    categories: { name: string; count: number }[];
+    category: string;
+    onCategory: (category: string) => void;
+}) {
+    const input = useRef<HTMLInputElement>(null);
+
+    // ⌘K / Ctrl+K focuses the search.
+    useEffect(() => {
+        const onKeyDown = (event: KeyboardEvent) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+                event.preventDefault();
+                input.current?.focus();
+            }
+        };
+
+        window.addEventListener('keydown', onKeyDown);
+
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, []);
+
     return (
-        <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Actions for ${document.title}`}
+        <div className="flex flex-wrap items-center gap-2">
+            <label className="relative min-w-55 flex-1 sm:max-w-sm">
+                <span className="sr-only">Search documents</span>
+                <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                    ref={input}
+                    type="search"
+                    value={search}
+                    onChange={(event) => onSearch(event.target.value)}
+                    placeholder="Search titles, categories, authors…"
+                    className="h-9 w-full rounded-lg border bg-card pr-12 pl-9 text-sm placeholder:text-muted-foreground focus:border-ring focus:outline-none"
+                />
+                <kbd className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 rounded border px-1.5 text-[10px] text-muted-foreground">
+                    ⌘K
+                </kbd>
+            </label>
+
+            {categories.length > 1 && (
+                <div
+                    role="tablist"
+                    aria-label="Filter by category"
+                    className="flex h-9 max-w-full items-center overflow-x-auto rounded-lg border bg-card p-0.5"
                 >
-                    <MoreHorizontal />
-                </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-                <DropdownMenuItem asChild>
+                    {categories.map(({ name, count }) => (
+                        <button
+                            key={name || 'all'}
+                            role="tab"
+                            type="button"
+                            aria-selected={category === name}
+                            onClick={() => onCategory(name)}
+                            className={cn(
+                                'flex h-full shrink-0 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition',
+                                category === name
+                                    ? 'bg-muted text-foreground'
+                                    : 'text-muted-foreground hover:text-foreground',
+                            )}
+                        >
+                            {name || 'All'}
+                            <span className="text-muted-foreground tabular-nums">
+                                {count}
+                            </span>
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            <Button asChild className="ml-auto">
+                <Link href={create()}>
+                    <FilePlus />
+                    New document
+                </Link>
+            </Button>
+        </div>
+    );
+}
+
+function DocumentRow({ document }: { document: DocumentSummary }) {
+    return (
+        <div
+            onClick={() => router.visit(show(document.id))}
+            className={cn(
+                GRID,
+                'group cursor-pointer px-4 py-2.5 text-sm transition hover:bg-muted/40',
+            )}
+        >
+            <div className="flex min-w-0 items-center gap-3">
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                    <FileText className="size-4" />
+                </div>
+                <Link
+                    href={show(document.id)}
+                    onClick={(event) => event.stopPropagation()}
+                    className="truncate font-medium hover:underline"
+                >
+                    {document.title}
+                </Link>
+            </div>
+
+            <span className="min-w-0">
+                <span className="inline-block max-w-full truncate rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    {document.category}
+                </span>
+            </span>
+
+            <span className="truncate text-xs text-muted-foreground">
+                {document.author ?? '—'}
+            </span>
+
+            <span className="truncate text-xs text-muted-foreground tabular-nums">
+                <span className="text-foreground">
+                    {formatDate(document.updated_at)}
+                </span>
+                {document.editor && ` · ${document.editor}`}
+            </span>
+
+            <div
+                onClick={(event) => event.stopPropagation()}
+                className={cn(
+                    'flex items-center justify-end gap-0.5 opacity-60 transition group-focus-within:opacity-100 group-hover:opacity-100',
+                    ACTIONS_WIDTH,
+                )}
+            >
+                <IconButton label={`Edit ${document.title}`} asChild>
                     <Link href={edit(document.id)}>
                         <Pencil />
-                        Edit
                     </Link>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" asChild>
+                </IconButton>
+                <IconButton
+                    label={`Delete ${document.title}`}
+                    asChild
+                    className="hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-300"
+                >
                     <Link href={deletePage(document.id)}>
                         <Trash2 />
-                        Delete
                     </Link>
-                </DropdownMenuItem>
-            </DropdownMenuContent>
-        </DropdownMenu>
+                </IconButton>
+            </div>
+        </div>
     );
 }
 
@@ -166,6 +274,7 @@ export default function Documentation({
 }) {
     const [search, setSearch] = useState('');
     const term = search.trim().toLowerCase();
+    const [category, setCategory] = useState(ALL_CATEGORIES);
     // Server order (last updated first) until a column is picked.
     const [sort, setSort] = useState<Sort>(null);
 
@@ -202,60 +311,83 @@ export default function Documentation({
         }
     };
 
+    const categories = useMemo(() => {
+        const counts = new Map<string, number>();
+
+        for (const document of documents) {
+            counts.set(
+                document.category,
+                (counts.get(document.category) ?? 0) + 1,
+            );
+        }
+
+        return [
+            { name: ALL_CATEGORIES, count: documents.length },
+            ...[...counts]
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([name, count]) => ({ name, count })),
+        ];
+    }, [documents]);
+
     const rows = useMemo(
         () =>
             sortDocuments(documents, sort).filter(
-                (document) => term === '' || documentMatches(document, term),
+                (document) =>
+                    (category === ALL_CATEGORIES ||
+                        document.category === category) &&
+                    (term === '' || documentMatches(document, term)),
             ),
-        [documents, sort, term],
+        [documents, sort, term, category],
     );
 
     return (
         <>
             <Head title="Documentation" />
-            <div className="flex h-full flex-1 flex-col gap-4 overflow-x-auto rounded-xl p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                    <div className="relative w-full max-w-sm">
-                        <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                            type="search"
-                            value={search}
-                            onChange={(event) => setSearch(event.target.value)}
-                            placeholder="Search documents..."
-                            aria-label="Search documents"
-                            className="pl-9"
-                        />
+            <div className="mx-auto w-full max-w-350 space-y-6 p-4 sm:p-6">
+                <Toolbar
+                    search={search}
+                    onSearch={setSearch}
+                    categories={categories}
+                    category={category}
+                    onCategory={setCategory}
+                />
+
+                {documents.length === 0 ? (
+                    <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground">
+                        <FileText className="size-8" />
+                        <p>No documents yet.</p>
+                        <Button variant="outline" size="sm" asChild>
+                            <Link href={create()}>
+                                <FilePlus />
+                                Create the first one
+                            </Link>
+                        </Button>
                     </div>
-                    <Button asChild>
-                        <Link href={create()}>
-                            <Plus />
-                            New document
-                        </Link>
-                    </Button>
-                </div>
-                <div className="relative min-h-[100vh] flex-1 overflow-x-auto rounded-xl border border-sidebar-border/70 md:min-h-min dark:border-sidebar-border">
-                    {documents.length === 0 ? (
-                        <div className="flex flex-col items-center gap-3 p-10 text-center text-muted-foreground">
-                            <FileText className="size-8" />
-                            <p>No documents yet.</p>
-                            <Button variant="outline" asChild>
-                                <Link href={create()}>
-                                    <Plus />
-                                    Create the first one
-                                </Link>
-                            </Button>
-                        </div>
-                    ) : (
-                        <table className="w-full text-left text-sm">
-                            <thead className="border-b border-sidebar-border/70 dark:border-sidebar-border">
-                                <tr className="align-middle">
-                                    <SortableHeader
-                                        column="title"
-                                        sort={sort}
-                                        onSort={toggleSort}
-                                    >
-                                        Title
-                                    </SortableHeader>
+                ) : rows.length === 0 ? (
+                    <div className="rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground">
+                        {term
+                            ? `No documents match “${search.trim()}”.`
+                            : 'No documents in this category.'}
+                    </div>
+                ) : (
+                    <section className="overflow-hidden rounded-xl border bg-card">
+                        <div className="overflow-x-auto">
+                            <div className="min-w-180">
+                                <div
+                                    className={cn(
+                                        GRID,
+                                        'border-b px-4 py-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase',
+                                    )}
+                                >
+                                    <span className="pl-11">
+                                        <SortableHeader
+                                            column="title"
+                                            sort={sort}
+                                            onSort={toggleSort}
+                                        >
+                                            Title
+                                        </SortableHeader>
+                                    </span>
                                     <SortableHeader
                                         column="category"
                                         sort={sort}
@@ -263,9 +395,7 @@ export default function Documentation({
                                     >
                                         Category
                                     </SortableHeader>
-                                    <th className="p-3 font-medium">
-                                        Created by
-                                    </th>
+                                    <span>Created by</span>
                                     <SortableHeader
                                         column="updated_at"
                                         sort={sort}
@@ -273,75 +403,27 @@ export default function Documentation({
                                     >
                                         Last updated
                                     </SortableHeader>
-                                    <th className="p-3 text-right font-medium">
-                                        <span className="sr-only">Actions</span>
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {rows.length === 0 && (
-                                    <tr>
-                                        <td
-                                            colSpan={5}
-                                            className="p-4 text-muted-foreground"
-                                        >
-                                            No documents match “{search}”.
-                                        </td>
-                                    </tr>
-                                )}
-                                {rows.map((document) => (
-                                    <tr
-                                        key={document.id}
-                                        onClick={() =>
-                                            router.visit(show(document.id))
-                                        }
-                                        className="cursor-pointer border-b border-sidebar-border/70 align-middle last:border-b-0 hover:bg-muted/50 dark:border-sidebar-border"
+                                    <span
+                                        className={cn(
+                                            ACTIONS_WIDTH,
+                                            'text-right',
+                                        )}
                                     >
-                                        <td className="p-3 font-medium">
-                                            <Link
-                                                href={show(document.id)}
-                                                className="inline-flex items-center gap-2 hover:underline"
-                                                onClick={(event) =>
-                                                    event.stopPropagation()
-                                                }
-                                            >
-                                                <FileText className="size-4 shrink-0 text-muted-foreground" />
-                                                {document.title}
-                                            </Link>
-                                        </td>
-                                        <td className="p-3">
-                                            <Badge variant="secondary">
-                                                {document.category}
-                                            </Badge>
-                                        </td>
-                                        <td className="p-3 text-muted-foreground">
-                                            {document.author ?? '—'}
-                                        </td>
-                                        <td className="p-3 text-muted-foreground tabular-nums">
-                                            {formatDate(document.updated_at)}
-                                            {document.editor && (
-                                                <span>
-                                                    {' '}
-                                                    by {document.editor}
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td
-                                            className="px-3 py-1 text-right"
-                                            onClick={(event) =>
-                                                event.stopPropagation()
-                                            }
-                                        >
-                                            <DocumentActions
-                                                document={document}
-                                            />
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    )}
-                </div>
+                                        <span className="sr-only">Actions</span>
+                                    </span>
+                                </div>
+                                <div className="divide-y">
+                                    {rows.map((document) => (
+                                        <DocumentRow
+                                            key={document.id}
+                                            document={document}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                )}
             </div>
         </>
     );

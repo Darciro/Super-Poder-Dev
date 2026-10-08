@@ -47,33 +47,21 @@ class Caddy
     }
 
     /**
-     * Start Caddy in the background as root (ports 80/443 need it), like `sudo caddy run --config …`.
-     * Tries passwordless sudo first, then asks for the password with the macOS admin prompt.
+     * Start Caddy in the background as the current user, like `caddy start --config …`.
+     * No root needed: macOS lets any user listen on ports 80/443 on all interfaces,
+     * which is how Caddy listens unless a site block binds a specific address.
      */
     public function start(): bool
     {
-        $log = storage_path('logs/caddy.log');
-
-        // Created by us, so it stays writable after root appends to it.
-        File::append($log, '');
-
         // `caddy start` runs `caddy run` in the background and waits until it's up.
-        // HOME keeps Caddy's data (the trusted local CA) in the user's folder, as sudo does.
         $command = sprintf(
-            'HOME=%s %s start --config %s >> %s 2>&1',
-            escapeshellarg((string) getenv('HOME')),
+            '%s start --config %s >> %s 2>&1',
             escapeshellarg($this->settings->get('caddy_binary')),
             escapeshellarg($this->config()),
-            escapeshellarg($log),
+            escapeshellarg(storage_path('logs/caddy.log')),
         );
 
-        if (Process::timeout(30)->run(['sudo', '-n', 'sh', '-c', $command])->successful()) {
-            return true;
-        }
-
-        $script = sprintf('do shell script "%s" with administrator privileges', addcslashes($command, '"\\'));
-
-        return Process::timeout(120)->run(['osascript', '-e', $script])->successful();
+        return Process::timeout(30)->run(['sh', '-c', $command])->successful();
     }
 
     /**

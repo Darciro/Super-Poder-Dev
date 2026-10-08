@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { useCurrentUrl } from '@/hooks/use-current-url';
 import { cn, toUrl } from '@/lib/utils';
+import { show as showAbout } from '@/routes/about';
 import { edit as editAppearance } from '@/routes/appearance';
 import { edit as editData } from '@/routes/data';
 import { edit as editIntegrations } from '@/routes/integrations';
@@ -38,6 +39,11 @@ const sidebarNavItems: (NavItem & { desktop?: boolean })[] = [
     {
         title: 'Data',
         href: editData(),
+        icon: null,
+    },
+    {
+        title: 'About',
+        href: showAbout(),
         icon: null,
     },
 ];

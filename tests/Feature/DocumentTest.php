@@ -93,7 +93,10 @@ test('a document can be edited', function () {
 
     $this->get(route('documentation.edit', $document))
         ->assertOk()
-        ->assertInertia(fn (Assert $page) => $page->component('documentation/edit'));
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('documentation/edit')
+            ->where('document.author', $author->name)
+            ->where('document.category_id', $document->category_id));
 
     $this->put(route('documentation.update', $document), [
         'title' => 'Renamed',

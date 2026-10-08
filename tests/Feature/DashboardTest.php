@@ -205,7 +205,7 @@ test('caddy is stopped through its admin api', function () {
         && $request->url() === 'http://localhost:2019/stop');
 });
 
-test('caddy is started as root with its caddyfile', function () {
+test('caddy is started as the current user with its caddyfile', function () {
     Process::fake();
     config(['services.caddy.config' => '/Users/me/caddy/Caddyfile']);
 
@@ -215,8 +215,9 @@ test('caddy is started as root with its caddyfile', function () {
         ->post(route('dashboard.caddy.action', ['action' => 'start']))
         ->assertRedirect(route('dashboard'));
 
-    Process::assertRan(fn ($process) => $process->command[0] === 'sudo'
-        && str_contains($process->command[4], "start --config '/Users/me/caddy/Caddyfile'"));
+    Process::assertRan(fn ($process) => $process->command[0] === 'sh'
+        && str_contains($process->command[2], "start --config '/Users/me/caddy/Caddyfile'")
+        && ! str_contains($process->command[2], 'sudo'));
 });
 
 test('invalid caddy actions are rejected', function () {

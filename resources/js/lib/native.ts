@@ -11,6 +11,10 @@ declare global {
  * Whether the page runs inside the desktop app (NativePHP) rather than a browser.
  */
 export function isNative(): boolean {
+    if (typeof window === 'undefined') {
+        return false;
+    }
+
     return window.Native !== undefined;
 }
 

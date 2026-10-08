@@ -62,8 +62,10 @@ class DocumentController extends Controller
 
     public function edit(Document $document): Response
     {
+        $document->load(['category:id,name', 'author:id,name', 'editor:id,name']);
+
         return Inertia::render('documentation/edit', [
-            'document' => $document->only(['id', 'title', 'category_id', 'body']),
+            'document' => [...$this->summary($document), ...$document->only(['category_id', 'body'])],
             'categories' => $this->categories(),
         ]);
     }

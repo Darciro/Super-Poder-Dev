@@ -1,32 +1,32 @@
 import { Deferred, Head, router, usePoll } from '@inertiajs/react';
 import type { LucideIcon } from 'lucide-react';
 import {
-    ArrowDown,
-    ArrowUp,
-    ArrowUpDown,
-    Boxes,
+    Box,
     ChevronDown,
-    ChevronRight,
-    ExternalLink,
+    Code,
     Cpu,
+    ExternalLink,
     FolderOpen,
-    Plus,
+    FolderPlus,
+    Globe,
     MoreHorizontal,
     Network,
-    Globe,
     Play,
+    RefreshCw,
     RotateCw,
     Search,
     Square,
-    Trash2,
     SquareTerminal,
+    Terminal,
+    Trash2,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { TerminalDialog } from '@/components/terminal-dialog';
 import { DeleteProjectDialog } from '@/components/delete-project-dialog';
+import { IconButton } from '@/components/icon-button';
 import { ENVIRONMENTS, ProjectDialog } from '@/components/project-dialog';
 import type { ProjectDetails } from '@/components/project-dialog';
+import { TerminalDialog } from '@/components/terminal-dialog';
 import { Button } from '@/components/ui/button';
 import {
     DropdownMenu,
@@ -35,15 +35,14 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
-import { cn } from '@/lib/utils';
+import { cn, formatBytes } from '@/lib/utils';
 import { dashboard } from '@/routes';
 import { action as caddyAction } from '@/routes/dashboard/caddy';
 import { action as containerAction } from '@/routes/dashboard/containers';
-import { openIde } from '@/routes/dashboard/projects';
 import * as containerTerminal from '@/routes/dashboard/containers/terminal';
+import { openIde } from '@/routes/dashboard/projects';
 import * as projectTerminal from '@/routes/dashboard/projects/terminal';
 
 type Port = {
@@ -105,66 +104,193 @@ type Stats = {
     top: { name: string; cpu: number; memory: number }[];
 };
 
-function formatBytes(bytes: number): string {
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let value = bytes;
-    let unit = 0;
+type Tone = 'ok' | 'partial' | 'off';
 
-    while (value >= 1024 && unit < units.length - 1) {
-        value /= 1024;
-        unit++;
-    }
+type Filter = 'all' | 'running' | 'stopped';
 
-    return `${value.toFixed(unit >= 3 ? 1 : 0)} ${units[unit]}`;
+const FILTERS: { id: Filter; label: string }[] = [
+    { id: 'all', label: 'All' },
+    { id: 'running', label: 'Running' },
+    { id: 'stopped', label: 'Stopped' },
+];
+
+// Remembers the open terminal so it reopens after a page reload:
+// a container id, or "project:{name}" for a project's local terminal.
+const TERMINAL_STORAGE_KEY = 'dashboard.terminal';
+const PROJECT_TERMINAL_PREFIX = 'project:';
+
+const SESSION_NOTE =
+    'The session keeps running when you close this window or reload the page.';
+
+const COLLAPSED_STORAGE_KEY = 'dashboard.collapsed';
+
+const STANDALONE_KEY = '__standalone';
+
+const POLLED_PROPS = [
+    'containers',
+    'host',
+    'stats',
+    'terminals',
+    'localServers',
+    'caddy',
+];
+
+/* ───────────────────────── Helpers ───────────────────────── */
+
+function isRunning(container: Container): boolean {
+    return container.state === 'running';
 }
 
-function StatCard({
-    icon: Icon,
-    title,
-    children,
-}: {
-    icon: LucideIcon;
-    title: string;
-    children: ReactNode;
-}) {
+function groupSummary(group: ContainerGroup): {
+    running: number;
+    total: number;
+    tone: Tone;
+} {
+    const running = group.containers.filter(isRunning).length;
+    const total = group.containers.length;
+
+    return {
+        running,
+        total,
+        tone: running === total ? 'ok' : running === 0 ? 'off' : 'partial',
+    };
+}
+
+/**
+ * Split Docker's status ("Up 2 days (healthy)", "Exited (137) 13 days ago")
+ * into its health, exit code and the remaining text.
+ */
+function parseStatus(status: string): {
+    text: string;
+    health: 'healthy' | 'unhealthy' | null;
+    exitCode: number | null;
+} {
+    const health = status.match(/\((healthy|unhealthy)\)/)?.[1] ?? null;
+    const exited = status.match(/^Exited \((-?\d+)\)\s*(.*)$/);
+
+    return {
+        text: exited
+            ? exited[2]
+            : status.replace(/\s*\((healthy|unhealthy)\)/, ''),
+        health: health as 'healthy' | 'unhealthy' | null,
+        exitCode: exited ? parseInt(exited[1], 10) : null,
+    };
+}
+
+function hostname(url: string): string {
+    try {
+        return new URL(url).host;
+    } catch {
+        return url;
+    }
+}
+
+function containerMatches(container: Container, term: string): boolean {
+    return [
+        container.name,
+        container.service,
+        container.image,
+        ...container.ports.map((port) => port.url ?? port.label),
+    ]
+        .filter((value): value is string => value !== null)
+        .some((value) => value.toLowerCase().includes(term));
+}
+
+function projectMatches(group: ContainerGroup, term: string): boolean {
+    return [
+        group.project ?? 'standalone',
+        group.details?.name,
+        group.details?.path,
+    ].some((value) => value?.toLowerCase().includes(term));
+}
+
+function openInIde(project: string) {
+    router.post(openIde.url(project), {}, { preserveScroll: true });
+}
+
+/* ───────────────────────── Primitives ───────────────────────── */
+
+function StatusDot({ tone }: { tone: Tone }) {
     return (
-        <div className="flex min-h-40 flex-col gap-3 rounded-xl border border-sidebar-border/70 p-4 md:aspect-video dark:border-sidebar-border">
-            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <Icon className="size-4" />
-                {title}
-            </div>
-            <div className="flex flex-1 flex-col justify-between gap-3">
-                {children}
-            </div>
-        </div>
+        <span className="relative inline-flex size-2 shrink-0">
+            {tone === 'ok' && (
+                <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400/40" />
+            )}
+            <span
+                className={cn(
+                    'relative inline-flex size-2 rounded-full',
+                    tone === 'ok' && 'bg-emerald-500 dark:bg-emerald-400',
+                    tone === 'partial' && 'bg-amber-500 dark:bg-amber-400',
+                    tone === 'off' && 'bg-muted-foreground/50',
+                )}
+            />
+        </span>
     );
 }
 
 function Meter({
     value,
     max,
-    className,
+    tone = 'default',
 }: {
     value: number;
     max: number;
-    className?: string;
+    tone?: 'default' | 'ok';
 }) {
     const percent = max > 0 ? Math.min((value / max) * 100, 100) : 0;
 
     return (
-        <div
-            className={cn(
-                'h-1.5 w-full overflow-hidden rounded-full bg-muted',
-                className,
-            )}
-        >
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
             <div
-                className="h-full rounded-full bg-primary transition-[width]"
+                className={cn(
+                    'h-full rounded-full transition-[width]',
+                    tone === 'ok'
+                        ? 'bg-emerald-500 dark:bg-emerald-400'
+                        : 'bg-foreground/80',
+                )}
                 style={{ width: `${percent}%` }}
             />
         </div>
     );
 }
+
+function StatCard({
+    icon: Icon,
+    title,
+    aside,
+    children,
+}: {
+    icon: LucideIcon;
+    title: string;
+    aside?: ReactNode;
+    children: ReactNode;
+}) {
+    return (
+        <section className="flex min-h-42 flex-col rounded-xl border bg-card p-4">
+            <header className="mb-3 flex items-center justify-between gap-2">
+                <h2 className="flex items-center gap-2 text-[13px] font-medium text-muted-foreground">
+                    <Icon className="size-4" />
+                    {title}
+                </h2>
+                {aside}
+            </header>
+            <div className="flex flex-1 flex-col">{children}</div>
+        </section>
+    );
+}
+
+function BigNumber({ value, unit }: { value: number; unit: string }) {
+    return (
+        <p className="text-3xl font-semibold tracking-tight tabular-nums">
+            {value}
+            <span className="ml-1 text-base font-normal text-muted-foreground">
+                {unit}
+            </span>
+        </p>
+    );
+}
+
+/* ───────────────────────── Overview cards ───────────────────────── */
 
 function Resources({
     stats,
@@ -183,58 +309,54 @@ function Resources({
 
     // `docker stats` counts 100% per core, so the host capacity is cpus × 100%.
     const cpuCapacity = (host?.cpus ?? 1) * 100;
+    const [top] = stats.top;
 
     return (
         <>
-            <div className="flex flex-col gap-3">
+            <div className="space-y-3">
                 <div>
-                    <div className="flex items-baseline justify-between text-sm">
+                    <div className="mb-1.5 flex justify-between text-xs">
                         <span>CPU</span>
-                        <span className="tabular-nums">
-                            {stats.cpu.toFixed(1)}%
-                            {host && (
-                                <span className="text-muted-foreground">
-                                    {' '}
-                                    of {host.cpus} CPUs
-                                </span>
-                            )}
+                        <span className="text-muted-foreground tabular-nums">
+                            <span className="text-foreground">
+                                {stats.cpu.toFixed(1)}%
+                            </span>
+                            {host && ` of ${host.cpus} CPUs`}
                         </span>
                     </div>
-                    <Meter
-                        value={stats.cpu}
-                        max={cpuCapacity}
-                        className="mt-1.5"
-                    />
+                    <Meter value={stats.cpu} max={cpuCapacity} />
                 </div>
                 <div>
-                    <div className="flex items-baseline justify-between text-sm">
+                    <div className="mb-1.5 flex justify-between text-xs">
                         <span>Memory</span>
-                        <span className="tabular-nums">
-                            {formatBytes(stats.memory)}
-                            {host && (
-                                <span className="text-muted-foreground">
-                                    {' '}
-                                    / {formatBytes(host.memory)}
-                                </span>
-                            )}
+                        <span className="text-muted-foreground tabular-nums">
+                            <span className="text-foreground">
+                                {formatBytes(stats.memory)}
+                            </span>
+                            {host && ` / ${formatBytes(host.memory)}`}
                         </span>
                     </div>
                     <Meter
                         value={stats.memory}
                         max={host?.memory ?? stats.memory}
-                        className="mt-1.5"
                     />
                 </div>
             </div>
-            {stats.top.length > 0 && (
-                <p className="truncate text-sm text-muted-foreground">
-                    Top:{' '}
-                    {stats.top
+            {top && (
+                <p
+                    className="mt-auto truncate pt-4 text-xs text-muted-foreground"
+                    title={stats.top
                         .map(
                             (container) =>
                                 `${container.name} ${formatBytes(container.memory)}`,
                         )
                         .join(' · ')}
+                >
+                    Top:{' '}
+                    <span className="font-mono text-foreground/80">
+                        {top.name}
+                    </span>{' '}
+                    {formatBytes(top.memory)}
                 </p>
             )}
         </>
@@ -248,6 +370,51 @@ function ResourcesFallback() {
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-4 w-2/3" />
         </div>
+    );
+}
+
+function PortsCard({
+    ports,
+    webApps,
+    localServers,
+}: {
+    ports: number;
+    webApps: number;
+    localServers: LocalServer[];
+}) {
+    return (
+        <StatCard icon={Network} title="Ports">
+            <BigNumber value={ports + localServers.length} unit="open" />
+            <p className="mt-1 text-xs text-muted-foreground">
+                <span className="text-foreground">{webApps}</span>{' '}
+                {webApps === 1 ? 'web app' : 'web apps'} reachable in the
+                browser
+            </p>
+            {localServers.length > 0 && (
+                <div className="mt-auto pt-3">
+                    <p className="mb-1.5 flex items-center gap-1.5 text-[11px] tracking-wide text-muted-foreground uppercase">
+                        <Terminal className="size-3" /> From terminal
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                        {localServers.map((server) => (
+                            <a
+                                key={server.pid}
+                                href={server.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={`php -S ${server.address}${server.path ? ` · ${server.path}` : ''} (PID ${server.pid})`}
+                                className="rounded-md border bg-background px-1.5 py-0.5 font-mono text-[11px] hover:bg-muted"
+                            >
+                                {server.name ?? server.address}{' '}
+                                <span className="text-muted-foreground">
+                                    :{server.address.split(':').pop()}
+                                </span>
+                            </a>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </StatCard>
     );
 }
 
@@ -270,37 +437,40 @@ function CaddyCard({ caddy }: { caddy: CaddyStatus }) {
     };
 
     return (
-        <StatCard icon={Globe} title="Caddy">
-            <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-2">
-                    <p className="text-3xl font-semibold tabular-nums">
-                        {caddy.sites.length}
-                        <span className="text-lg font-normal text-muted-foreground">
-                            {' '}
-                            {caddy.sites.length === 1 ? 'host' : 'hosts'}
-                        </span>
-                    </p>
-                    <span
-                        className={cn(
-                            'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium',
-                            caddy.running
-                                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                                : 'bg-muted text-muted-foreground',
-                        )}
-                    >
-                        <span
-                            className={cn(
-                                'size-1.5 rounded-full',
-                                caddy.running
-                                    ? 'bg-emerald-500'
-                                    : 'bg-muted-foreground',
-                            )}
+        <StatCard
+            icon={Globe}
+            title="Caddy"
+            aside={
+                <span
+                    className={cn(
+                        'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium',
+                        caddy.running
+                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                            : 'bg-muted text-muted-foreground',
+                    )}
+                >
+                    <StatusDot tone={caddy.running ? 'ok' : 'off'} />
+                    {caddy.running ? 'Running' : 'Stopped'}
+                </span>
+            }
+        >
+            {caddy.exists ? (
+                <>
+                    <div className="flex items-baseline justify-between gap-2">
+                        <BigNumber
+                            value={caddy.sites.length}
+                            unit={caddy.sites.length === 1 ? 'host' : 'hosts'}
                         />
-                        {caddy.running ? 'Running' : 'Stopped'}
-                    </span>
-                </div>
-                {caddy.exists ? (
-                    <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
+                        <span
+                            className="truncate text-xs text-muted-foreground"
+                            title={caddy.config}
+                        >
+                            {ports.length > 0
+                                ? `${ports.length === 1 ? 'port' : 'ports'} ${ports.join(', ')}`
+                                : 'no ports'}
+                        </span>
+                    </div>
+                    <div className="mt-3 grid max-h-13 grid-cols-3 gap-1.5 overflow-y-auto">
                         {caddy.sites.map((site) => (
                             <a
                                 key={site.address}
@@ -308,42 +478,33 @@ function CaddyCard({ caddy }: { caddy: CaddyStatus }) {
                                 target="_blank"
                                 rel="noreferrer"
                                 title={`${site.address} → ${site.upstreams.join(', ') || 'no reverse_proxy'}`}
-                                className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground hover:underline"
+                                className="truncate rounded-md bg-muted px-1.5 py-0.5 text-center font-mono text-[11px] hover:bg-muted/70 hover:underline"
                             >
                                 :{site.port}
-                                <span className="text-muted-foreground">
-                                    →{' '}
-                                    {site.upstreams
-                                        .map((upstream) =>
-                                            upstream.split(':').pop(),
-                                        )
-                                        .join(', ') || '—'}
-                                </span>
+                                <span className="text-muted-foreground">→</span>
+                                {site.upstreams
+                                    .map((upstream) =>
+                                        upstream.split(':').pop(),
+                                    )
+                                    .join(', ') || '—'}
                             </a>
                         ))}
                     </div>
-                ) : (
-                    <p className="text-sm text-muted-foreground">
-                        Caddyfile not found at{' '}
-                        <span className="font-mono">{caddy.config}</span>.
-                    </p>
-                )}
-            </div>
-            <div className="flex items-center justify-between gap-2">
-                <p
-                    className="truncate text-sm text-muted-foreground"
-                    title={caddy.config}
-                >
-                    {ports.length > 0
-                        ? `Ports ${ports.join(', ')}`
-                        : 'No ports'}
+                </>
+            ) : (
+                <p className="text-sm text-muted-foreground">
+                    Caddyfile not found at{' '}
+                    <span className="font-mono">{caddy.config}</span>.
                 </p>
+            )}
+            <div className="mt-auto flex gap-2 pt-3">
                 {caddy.running ? (
                     <Button
                         variant="outline"
                         size="sm"
                         disabled={processing}
                         onClick={() => run('stop')}
+                        className="h-7 px-2.5 text-xs hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-300"
                     >
                         {processing ? <Spinner /> : <Square />}
                         Stop
@@ -354,6 +515,7 @@ function CaddyCard({ caddy }: { caddy: CaddyStatus }) {
                         size="sm"
                         disabled={processing || !caddy.exists}
                         onClick={() => run('start')}
+                        className="h-7 px-2.5 text-xs"
                     >
                         {processing ? <Spinner /> : <Play />}
                         Start
@@ -364,67 +526,112 @@ function CaddyCard({ caddy }: { caddy: CaddyStatus }) {
     );
 }
 
-type ContainerActionName = 'start' | 'stop' | 'restart';
+/* ───────────────────────── Toolbar ───────────────────────── */
 
-function ContainerActions({
-    container,
-    onTerminal,
+function Toolbar({
+    search,
+    onSearch,
+    filter,
+    onFilter,
+    counts,
+    onAddProject,
 }: {
-    container: Container;
-    onTerminal: () => void;
+    search: string;
+    onSearch: (value: string) => void;
+    filter: Filter;
+    onFilter: (filter: Filter) => void;
+    counts: Record<Filter, number>;
+    onAddProject: () => void;
 }) {
-    const [processing, setProcessing] = useState(false);
-    const running = container.state === 'running';
+    const input = useRef<HTMLInputElement>(null);
+    const [refreshing, setRefreshing] = useState(false);
 
-    const run = (action: ContainerActionName) => {
-        router.post(
-            containerAction({ container: container.id, action }),
-            {},
-            {
-                preserveScroll: true,
-                onStart: () => setProcessing(true),
-                onFinish: () => setProcessing(false),
-            },
-        );
+    // ⌘K / Ctrl+K focuses the search.
+    useEffect(() => {
+        const onKeyDown = (event: KeyboardEvent) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+                event.preventDefault();
+                input.current?.focus();
+            }
+        };
+
+        window.addEventListener('keydown', onKeyDown);
+
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, []);
+
+    const refresh = () => {
+        router.reload({
+            only: POLLED_PROPS,
+            onStart: () => setRefreshing(true),
+            onFinish: () => setRefreshing(false),
+        });
     };
 
     return (
-        // Non-modal so focus can move straight into the terminal modal.
-        <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
+        <div className="flex flex-wrap items-center gap-2">
+            <label className="relative min-w-55 flex-1 sm:max-w-sm">
+                <span className="sr-only">Search containers</span>
+                <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                    ref={input}
+                    type="search"
+                    value={search}
+                    onChange={(event) => onSearch(event.target.value)}
+                    placeholder="Search projects, containers, images, ports…"
+                    className="h-9 w-full rounded-lg border bg-card pr-12 pl-9 text-sm placeholder:text-muted-foreground focus:border-ring focus:outline-none"
+                />
+                <kbd className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 rounded border px-1.5 text-[10px] text-muted-foreground">
+                    ⌘K
+                </kbd>
+            </label>
+
+            <div
+                role="tablist"
+                aria-label="Filter by state"
+                className="flex h-9 items-center rounded-lg border bg-card p-0.5"
+            >
+                {FILTERS.map(({ id, label }) => (
+                    <button
+                        key={id}
+                        role="tab"
+                        type="button"
+                        aria-selected={filter === id}
+                        onClick={() => onFilter(id)}
+                        className={cn(
+                            'flex h-full items-center gap-1.5 rounded-md px-3 text-xs font-medium transition',
+                            filter === id
+                                ? 'bg-muted text-foreground'
+                                : 'text-muted-foreground hover:text-foreground',
+                        )}
+                    >
+                        {label}
+                        <span className="text-muted-foreground tabular-nums">
+                            {counts[id]}
+                        </span>
+                    </button>
+                ))}
+            </div>
+
+            <div className="ml-auto flex items-center gap-2">
                 <Button
-                    variant="ghost"
-                    size="icon"
-                    disabled={processing}
-                    aria-label={`Actions for ${container.name}`}
+                    variant="outline"
+                    onClick={refresh}
+                    disabled={refreshing}
                 >
-                    {processing ? <Spinner /> : <MoreHorizontal />}
+                    <RefreshCw className={cn(refreshing && 'animate-spin')} />
+                    Refresh
                 </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-                {running ? (
-                    <DropdownMenuItem onSelect={() => run('stop')}>
-                        <Square />
-                        Stop
-                    </DropdownMenuItem>
-                ) : (
-                    <DropdownMenuItem onSelect={() => run('start')}>
-                        <Play />
-                        Start
-                    </DropdownMenuItem>
-                )}
-                <DropdownMenuItem onSelect={() => run('restart')}>
-                    <RotateCw />
-                    Restart
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled={!running} onSelect={onTerminal}>
-                    <SquareTerminal />
-                    Terminal
-                </DropdownMenuItem>
-            </DropdownMenuContent>
-        </DropdownMenu>
+                <Button onClick={onAddProject}>
+                    <FolderPlus />
+                    Add local project
+                </Button>
+            </div>
+        </div>
     );
 }
+
+/* ───────────────────────── Project actions ───────────────────────── */
 
 const ENVIRONMENT_STYLES: Record<(typeof ENVIRONMENTS)[number]['key'], string> =
     {
@@ -439,22 +646,16 @@ const ENVIRONMENT_STYLES: Record<(typeof ENVIRONMENTS)[number]['key'], string> =
             'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300',
     };
 
-function hostname(url: string): string {
-    try {
-        return new URL(url).host;
-    } catch {
-        return url;
-    }
-}
-
 /**
  * Project title that opens a panel of the configured environment tiles (each opens its URL in a new tab).
  */
 function EnvironmentLinks({
     details,
+    className,
     children,
 }: {
     details: ProjectDetails | null;
+    className?: string;
     children: ReactNode;
 }) {
     const environments = ENVIRONMENTS.flatMap(({ key, label }) => {
@@ -465,9 +666,14 @@ function EnvironmentLinks({
 
     return (
         <DropdownMenu modal={false}>
-            <DropdownMenuTrigger className="inline-flex cursor-pointer items-center gap-1 rounded underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring">
-                {children}
-                <ChevronDown className="size-3.5 text-muted-foreground" />
+            <DropdownMenuTrigger
+                className={cn(
+                    'inline-flex min-w-0 cursor-pointer items-center gap-1 rounded underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring',
+                    className,
+                )}
+            >
+                <span className="truncate">{children}</span>
+                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
                 align="start"
@@ -505,8 +711,8 @@ function EnvironmentLinks({
                     </div>
                 ) : (
                     <p className="rounded-lg border border-dashed px-3 py-4 text-center text-sm font-normal text-muted-foreground">
-                        No environments configured. Add their URLs in Actions →
-                        Project.
+                        No environments configured. Add their URLs in More
+                        actions → Project.
                     </p>
                 )}
             </DropdownMenuContent>
@@ -514,17 +720,18 @@ function EnvironmentLinks({
     );
 }
 
+type ProjectHandlers = {
+    onEdit: () => void;
+    onTerminal: () => void;
+    onDelete: () => void;
+};
+
 function ProjectActions({
     group,
     onEdit,
     onTerminal,
     onDelete,
-}: {
-    group: ContainerGroup;
-    onEdit: () => void;
-    onTerminal: () => void;
-    onDelete: () => void;
-}) {
+}: ProjectHandlers & { group: ContainerGroup }) {
     // Only projects without containers: for a Docker project, "delete" would read as
     // deleting its containers (its details can be cleared in the Project dialog).
     const deletable = group.details !== null && group.containers.length === 0;
@@ -532,13 +739,9 @@ function ProjectActions({
     return (
         <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Actions for ${group.project}`}
-                >
-                    <MoreHorizontal />
-                </Button>
+                <IconButton label={`More actions for ${group.project}`}>
+                    <MoreHorizontal className="size-4" />
+                </IconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
                 <DropdownMenuItem onSelect={onEdit}>
@@ -549,6 +752,14 @@ function ProjectActions({
                     <SquareTerminal />
                     Terminal
                 </DropdownMenuItem>
+                {group.details?.path && (
+                    <DropdownMenuItem
+                        onSelect={() => openInIde(group.project!)}
+                    >
+                        <Code />
+                        Open in IDE
+                    </DropdownMenuItem>
+                )}
                 {deletable && (
                     <>
                         <DropdownMenuSeparator />
@@ -566,211 +777,393 @@ function ProjectActions({
     );
 }
 
-// Remembers the open terminal so it reopens after a page reload:
-// a container id, or "project:{name}" for a project's local terminal.
-const TERMINAL_STORAGE_KEY = 'dashboard.terminal';
-const PROJECT_TERMINAL_PREFIX = 'project:';
-
-const SESSION_NOTE =
-    'The session keeps running when you close this window or reload the page.';
-
-type SortColumn = 'name' | 'image' | 'state' | 'ports';
-type Sort = { column: SortColumn; direction: 'asc' | 'desc' } | null;
-
-const SORT_STORAGE_KEY = 'dashboard.sort';
-const COLLAPSED_STORAGE_KEY = 'dashboard.collapsed';
-
-const STANDALONE_KEY = '__standalone';
-
-// "asc" lists healthy containers first.
-const STATE_ORDER = [
-    'running',
-    'restarting',
-    'paused',
-    'created',
-    'exited',
-    'dead',
-];
-
-function lowestPort(ports: Port[]): number | null {
-    const numbers = ports.map((port) => parseInt(port.label, 10));
-
-    return numbers.length > 0 ? Math.min(...numbers) : null;
-}
-
-function containerSortValue(
-    container: Container,
-    column: SortColumn,
-): string | number | null {
-    switch (column) {
-        case 'name':
-            return (container.service ?? container.name).toLowerCase();
-        case 'image':
-            return container.image.toLowerCase();
-        case 'state': {
-            const index = STATE_ORDER.indexOf(container.state);
-
-            return index === -1 ? STATE_ORDER.length : index;
-        }
-        case 'ports':
-            return lowestPort(container.ports);
-    }
-}
-
-function groupSortValue(
-    group: ContainerGroup,
-    column: SortColumn,
-): string | number | null {
-    const { containers } = group;
-
-    switch (column) {
-        case 'name':
-            return (group.details?.name ?? group.project ?? '').toLowerCase();
-        case 'image':
-            return (
-                containers
-                    .map((container) => container.image.toLowerCase())
-                    .sort()[0] ?? null
-            );
-        case 'state':
-            // Share of containers running, negated so "asc" lists the healthiest first.
-            return containers.length > 0
-                ? -containers.filter(
-                      (container) => container.state === 'running',
-                  ).length / containers.length
-                : null;
-        case 'ports':
-            return lowestPort(
-                containers.flatMap((container) => container.ports),
-            );
-    }
-}
-
-/**
- * Compare sort values; empty values (no containers, no ports) always go last.
- */
-function compare(
-    a: string | number | null,
-    b: string | number | null,
-    direction: 'asc' | 'desc',
-): number {
-    if (a === b) {
-        return 0;
-    }
-
-    if (a === null) {
-        return 1;
-    }
-
-    if (b === null) {
-        return -1;
-    }
-
-    const result =
-        typeof a === 'number' && typeof b === 'number'
-            ? a - b
-            : String(a).localeCompare(String(b), undefined, { numeric: true });
-
-    return direction === 'asc' ? result : -result;
-}
-
-/**
- * Sort the projects and the containers inside them. Standalone stays last.
- */
-function sortGroups(groups: ContainerGroup[], sort: Sort): ContainerGroup[] {
-    if (sort === null) {
-        return groups;
-    }
-
-    const { column, direction } = sort;
-
-    return groups
-        .map((group) => ({
-            ...group,
-            containers: [...group.containers].sort((a, b) =>
-                compare(
-                    containerSortValue(a, column),
-                    containerSortValue(b, column),
-                    direction,
-                ),
-            ),
-        }))
-        .sort((a, b) => {
-            if (a.project === null || b.project === null) {
-                return a.project === null ? 1 : -1;
-            }
-
-            return compare(
-                groupSortValue(a, column),
-                groupSortValue(b, column),
-                direction,
-            );
-        });
-}
-
-function SortableHeader({
-    column,
-    sort,
-    onSort,
-    children,
+/** Green when a terminal session is running, so it's easy to get back to. */
+function TerminalButton({
+    label,
+    active,
+    disabled,
+    onClick,
 }: {
-    column: SortColumn;
-    sort: Sort;
-    onSort: (column: SortColumn) => void;
-    children: ReactNode;
+    label: string;
+    active: boolean;
+    disabled?: boolean;
+    onClick: () => void;
 }) {
-    const direction = sort?.column === column ? sort.direction : null;
-    const Icon =
-        direction === 'asc'
-            ? ArrowUp
-            : direction === 'desc'
-              ? ArrowDown
-              : ArrowUpDown;
-
     return (
-        <th
-            className="p-3 font-medium"
-            aria-sort={
-                direction === 'asc'
-                    ? 'ascending'
-                    : direction === 'desc'
-                      ? 'descending'
-                      : 'none'
-            }
+        <IconButton
+            label={active ? `${label} (session running)` : label}
+            disabled={disabled}
+            onClick={onClick}
+            className={cn(
+                active &&
+                    'text-emerald-600 hover:text-emerald-500 dark:text-emerald-400',
+            )}
         >
-            <button
-                type="button"
-                onClick={() => onSort(column)}
-                className="-mx-1 inline-flex items-center gap-1 rounded px-1 hover:text-foreground"
-            >
-                {children}
-                <Icon
-                    className={cn(
-                        'size-3.5',
-                        direction
-                            ? 'text-foreground'
-                            : 'text-muted-foreground/60',
-                    )}
-                />
-            </button>
-        </th>
+            <Terminal />
+        </IconButton>
     );
 }
 
-function containerMatches(container: Container, term: string): boolean {
-    return [container.name, container.service, container.image]
-        .filter((value): value is string => value !== null)
-        .some((value) => value.toLowerCase().includes(term));
-}
+/* ───────────────────────── Project + container rows ───────────────────────── */
 
-function groupMatches(group: ContainerGroup, term: string): boolean {
+const GRID =
+    'grid grid-cols-[minmax(0,1.6fr)_minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.1fr)_auto] items-center gap-4';
+
+// Fixed width so the column legend lines up with the row actions.
+const ACTIONS_WIDTH = 'w-23';
+
+type ContainerActionName = 'start' | 'stop' | 'restart';
+
+function ContainerStatus({ container }: { container: Container }) {
+    const { text, health, exitCode } = parseStatus(container.status);
+
     return (
-        [group.project ?? 'standalone', group.details?.name ?? ''].some(
-            (value) => value.toLowerCase().includes(term),
-        ) ||
-        group.containers.some((container) => containerMatches(container, term))
+        <div className="flex min-w-0 items-center gap-2 text-xs">
+            {isRunning(container) ? (
+                <span className="truncate">{text}</span>
+            ) : exitCode !== null ? (
+                <span className="truncate text-muted-foreground">
+                    Exited{' '}
+                    <span
+                        className={cn(
+                            'font-mono',
+                            exitCode !== 0 && 'text-red-600 dark:text-red-400',
+                        )}
+                    >
+                        ({exitCode})
+                    </span>
+                    {text && ` · ${text}`}
+                </span>
+            ) : (
+                <span className="truncate text-muted-foreground">
+                    {container.status}
+                </span>
+            )}
+            {health && (
+                <span
+                    className={cn(
+                        'shrink-0 rounded px-1.5 py-px text-[10px] font-medium',
+                        health === 'healthy'
+                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                            : 'bg-red-500/10 text-red-600 dark:text-red-400',
+                    )}
+                >
+                    {health}
+                </span>
+            )}
+        </div>
     );
 }
+
+function ContainerPorts({ ports }: { ports: Port[] }) {
+    if (ports.length === 0) {
+        return <span className="text-muted-foreground/60">—</span>;
+    }
+
+    return (
+        <div className="flex min-w-0 flex-wrap gap-1.5">
+            {ports.map((port) =>
+                port.url ? (
+                    <a
+                        key={port.label}
+                        href={port.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={port.label}
+                        className="inline-flex items-center gap-1 rounded-md bg-sky-500/10 px-1.5 py-0.5 font-mono text-[11px] text-sky-700 hover:bg-sky-500/20 dark:text-sky-300"
+                    >
+                        {port.url
+                            .replace(/^https?:\/\//, '')
+                            .replace(/^localhost/, '')}
+                        <ExternalLink className="size-3" />
+                    </a>
+                ) : (
+                    <span
+                        key={port.label}
+                        className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                    >
+                        {port.label}
+                    </span>
+                ),
+            )}
+        </div>
+    );
+}
+
+function ContainerRow({
+    container,
+    terminalActive,
+    onTerminal,
+}: {
+    container: Container;
+    terminalActive: boolean;
+    onTerminal: () => void;
+}) {
+    const [processing, setProcessing] = useState(false);
+    const running = isRunning(container);
+    const tone: Tone = running
+        ? 'ok'
+        : ['restarting', 'paused', 'created'].includes(container.state)
+          ? 'partial'
+          : 'off';
+
+    const run = (action: ContainerActionName) => {
+        router.post(
+            containerAction({ container: container.id, action }),
+            {},
+            {
+                preserveScroll: true,
+                onStart: () => setProcessing(true),
+                onFinish: () => setProcessing(false),
+            },
+        );
+    };
+
+    return (
+        <div
+            className={cn(
+                GRID,
+                'group px-4 py-2.5 text-sm transition hover:bg-muted/40',
+            )}
+        >
+            <div className="flex min-w-0 items-center gap-3">
+                <StatusDot tone={tone} />
+                <div className="min-w-0">
+                    <p
+                        className={cn(
+                            'truncate font-medium',
+                            !running && 'text-muted-foreground',
+                        )}
+                    >
+                        {container.service ?? container.name}
+                    </p>
+                    {container.service &&
+                        container.service !== container.name && (
+                            <p className="truncate font-mono text-[11px] text-muted-foreground">
+                                {container.name}
+                            </p>
+                        )}
+                </div>
+            </div>
+
+            <p
+                className="truncate font-mono text-xs text-muted-foreground"
+                title={container.image}
+            >
+                {container.image}
+            </p>
+
+            <ContainerStatus container={container} />
+
+            <ContainerPorts ports={container.ports} />
+
+            <div
+                className={cn(
+                    'flex items-center justify-end gap-0.5 transition group-focus-within:opacity-100 group-hover:opacity-100',
+                    ACTIONS_WIDTH,
+                    !processing && !terminalActive && 'opacity-60',
+                )}
+            >
+                {processing ? (
+                    <span className="inline-flex size-7 items-center justify-center text-muted-foreground">
+                        <Spinner className="size-3.5" />
+                    </span>
+                ) : running ? (
+                    <IconButton
+                        label={`Stop ${container.name}`}
+                        onClick={() => run('stop')}
+                    >
+                        <Square />
+                    </IconButton>
+                ) : (
+                    <IconButton
+                        label={`Start ${container.name}`}
+                        onClick={() => run('start')}
+                    >
+                        <Play />
+                    </IconButton>
+                )}
+                <IconButton
+                    label={`Restart ${container.name}`}
+                    disabled={processing}
+                    onClick={() => run('restart')}
+                >
+                    <RotateCw />
+                </IconButton>
+                <TerminalButton
+                    label={`Open shell in ${container.name}`}
+                    active={terminalActive}
+                    disabled={!running}
+                    onClick={onTerminal}
+                />
+            </div>
+        </div>
+    );
+}
+
+function ProjectCard({
+    group,
+    expanded,
+    onToggle,
+    terminals,
+    onContainerTerminal,
+    ...handlers
+}: ProjectHandlers & {
+    group: ContainerGroup;
+    expanded: boolean;
+    onToggle: () => void;
+    terminals: string[];
+    onContainerTerminal: (id: string) => void;
+}) {
+    const { running, total, tone } = groupSummary(group);
+    const name = group.details?.name ?? group.project ?? 'Standalone';
+
+    return (
+        <section className="overflow-hidden rounded-xl border bg-card">
+            <header className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    aria-expanded={expanded}
+                    aria-label={`${expanded ? 'Collapse' : 'Expand'} ${name}`}
+                    className="-ml-1 inline-flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                    <ChevronDown
+                        className={cn(
+                            'size-4 transition-transform',
+                            !expanded && '-rotate-90',
+                        )}
+                    />
+                </button>
+                <StatusDot tone={tone} />
+                {group.project ? (
+                    <EnvironmentLinks
+                        details={group.details}
+                        className="font-semibold"
+                    >
+                        {name}
+                    </EnvironmentLinks>
+                ) : (
+                    <span className="font-semibold">{name}</span>
+                )}
+                {group.details?.name && (
+                    <span className="font-mono text-xs text-muted-foreground">
+                        {group.project}
+                    </span>
+                )}
+                <span
+                    className={cn(
+                        'rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums',
+                        tone === 'ok' &&
+                            'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+                        tone === 'partial' &&
+                            'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+                        tone === 'off' && 'bg-muted text-muted-foreground',
+                    )}
+                >
+                    {running}/{total} running
+                </span>
+
+                {group.project && (
+                    <div className="ml-auto flex items-center gap-1">
+                        {group.details?.path && (
+                            <button
+                                type="button"
+                                onClick={() => openInIde(group.project!)}
+                                title="Open in IDE"
+                                className="mr-1 hidden items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground lg:inline-flex"
+                            >
+                                <FolderOpen className="size-3.5" />
+                                {group.details.path}
+                            </button>
+                        )}
+                        <TerminalButton
+                            label={`Open local terminal for ${group.project}`}
+                            active={terminals.includes(
+                                `project-${group.project}`,
+                            )}
+                            onClick={handlers.onTerminal}
+                        />
+                        <ProjectActions group={group} {...handlers} />
+                    </div>
+                )}
+            </header>
+
+            {expanded && (
+                <div className="overflow-x-auto border-t">
+                    <div className="min-w-215 divide-y">
+                        {group.containers.map((container) => (
+                            <ContainerRow
+                                key={container.id}
+                                container={container}
+                                terminalActive={terminals.includes(
+                                    container.id,
+                                )}
+                                onTerminal={() =>
+                                    onContainerTerminal(container.id)
+                                }
+                            />
+                        ))}
+                    </div>
+                </div>
+            )}
+        </section>
+    );
+}
+
+function LocalProject({
+    group,
+    terminalActive,
+    ...handlers
+}: ProjectHandlers & {
+    group: ContainerGroup;
+    terminalActive: boolean;
+}) {
+    return (
+        <div className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 transition hover:border-foreground/20">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                <FolderOpen className="size-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+                <EnvironmentLinks
+                    details={group.details}
+                    className="max-w-full text-sm font-medium"
+                >
+                    {group.details?.name ?? group.project}
+                </EnvironmentLinks>
+                {group.details?.path ? (
+                    <button
+                        type="button"
+                        onClick={() => openInIde(group.project!)}
+                        title="Open in IDE"
+                        className="block max-w-full truncate font-mono text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+                    >
+                        {group.details.path}
+                    </button>
+                ) : (
+                    <p className="truncate font-mono text-[11px] text-muted-foreground">
+                        {group.project}
+                    </p>
+                )}
+            </div>
+            <div
+                className={cn(
+                    'flex items-center transition group-focus-within:opacity-100 group-hover:opacity-100',
+                    !terminalActive && 'opacity-60',
+                )}
+            >
+                <TerminalButton
+                    label={`Open terminal in ${group.project}`}
+                    active={terminalActive}
+                    onClick={handlers.onTerminal}
+                />
+                <ProjectActions group={group} {...handlers} />
+            </div>
+        </div>
+    );
+}
+
+/* ───────────────────────── Page ───────────────────────── */
 
 export default function Dashboard({
     containers,
@@ -850,16 +1243,9 @@ export default function Dashboard({
             : null;
     }, [containers, terminalId]);
 
-    // Keep the cards and table in sync with Docker.
+    // Keep the cards and projects in sync with Docker.
     const { start: startPolling, stop: stopPolling } = usePoll(15000, {
-        only: [
-            'containers',
-            'host',
-            'stats',
-            'terminals',
-            'localServers',
-            'caddy',
-        ],
+        only: POLLED_PROPS,
     });
 
     // Pause while a terminal is open: the dev server handles one request at a time,
@@ -874,17 +1260,17 @@ export default function Dashboard({
 
     const summary = useMemo(() => {
         const all = containers.flatMap((group) => group.containers);
-        const running = all.filter(
-            (container) => container.state === 'running',
-        ).length;
+        const running = all.filter(isRunning).length;
         const ports = all.flatMap((container) => container.ports);
 
         return {
             total: all.length,
             running,
             stopped: all.length - running,
-            projects: containers.filter((group) => group.project !== null)
-                .length,
+            projects: containers.filter(
+                (group) =>
+                    group.project !== null && group.containers.length > 0,
+            ).length,
             ports: ports.length,
             webApps: ports.filter((port) => port.url !== null).length,
         };
@@ -892,8 +1278,7 @@ export default function Dashboard({
 
     const [search, setSearch] = useState('');
     const term = search.trim().toLowerCase();
-
-    const [sort, setSort] = useState<Sort>(null);
+    const [filter, setFilter] = useState<Filter>('all');
 
     // Keys of the collapsed groups (project name, or STANDALONE_KEY).
     const [collapsed, setCollapsed] = useState<string[]>([]);
@@ -924,83 +1309,89 @@ export default function Dashboard({
         }
     };
 
-    useEffect(() => {
-        try {
-            const saved = localStorage.getItem(SORT_STORAGE_KEY);
+    // Projects with containers become cards (busiest first, Standalone last);
+    // the ones without containers go to the "Local projects" grid.
+    const dockerGroups = useMemo(
+        () =>
+            containers
+                .filter((group) => group.containers.length > 0)
+                .map((group) => {
+                    const whole = term === '' || projectMatches(group, term);
 
-            if (saved) {
-                setSort(JSON.parse(saved) as Sort);
-            }
-        } catch {
-            // Storage unavailable or invalid: keep the default order.
-        }
-    }, []);
+                    return {
+                        ...group,
+                        containers: group.containers.filter(
+                            (container) =>
+                                (filter === 'all' ||
+                                    isRunning(container) ===
+                                        (filter === 'running')) &&
+                                (whole || containerMatches(container, term)),
+                        ),
+                    };
+                })
+                .filter((group) => group.containers.length > 0)
+                .sort((a, b) => {
+                    if (a.project === null || b.project === null) {
+                        return a.project === null ? 1 : -1;
+                    }
 
-    // Each click on a column: ascending → descending → default order.
-    const toggleSort = (column: SortColumn) => {
-        const next: Sort =
-            sort?.column !== column
-                ? { column, direction: 'asc' }
-                : sort.direction === 'asc'
-                  ? { column, direction: 'desc' }
-                  : null;
+                    return groupSummary(b).running - groupSummary(a).running;
+                }),
+        [containers, term, filter],
+    );
 
-        setSort(next);
+    const localGroups = useMemo(
+        () =>
+            filter === 'running'
+                ? []
+                : containers.filter(
+                      (group) =>
+                          group.project !== null &&
+                          group.containers.length === 0 &&
+                          (term === '' || projectMatches(group, term)),
+                  ),
+        [containers, term, filter],
+    );
 
-        try {
-            if (next) {
-                localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(next));
-            } else {
-                localStorage.removeItem(SORT_STORAGE_KEY);
-            }
-        } catch {
-            // Ignore: see above.
-        }
-    };
-
-    // Matching groups move to the top (keeping the sorted order);
-    // the rest stay below, dimmed. An empty search keeps the sorted order.
-    const groups = useMemo(() => {
-        const sorted = sortGroups(containers, sort);
-
-        if (term === '') {
-            return sorted.map((group) => ({ group, matches: true }));
-        }
-
-        const marked = sorted.map((group) => ({
-            group,
-            matches: groupMatches(group, term),
-        }));
-
-        return [
-            ...marked.filter(({ matches }) => matches),
-            ...marked.filter(({ matches }) => !matches),
-        ];
-    }, [containers, term, sort]);
+    const handlersFor = (group: ContainerGroup): ProjectHandlers => ({
+        onEdit: () => setDialogProject(group.project),
+        onTerminal: () =>
+            openTerminal(`${PROJECT_TERMINAL_PREFIX}${group.project}`),
+        onDelete: () => setDeleteProject(group.project),
+    });
 
     return (
         <>
             <Head title="Dashboard" />
-            <div className="flex h-full flex-1 flex-col gap-4 overflow-x-auto rounded-xl p-4">
-                <div className="grid auto-rows-min gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <StatCard icon={Boxes} title="Containers">
-                        <div>
-                            <p className="text-3xl font-semibold tabular-nums">
-                                {summary.running}
-                                <span className="text-lg font-normal text-muted-foreground">
-                                    {' '}
-                                    / {summary.total} running
-                                </span>
-                            </p>
+            <div className="mx-auto w-full max-w-350 space-y-6 p-4 sm:p-6">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <StatCard icon={Box} title="Containers">
+                        <BigNumber
+                            value={summary.running}
+                            unit={`/ ${summary.total} running`}
+                        />
+                        <div className="mt-3">
                             <Meter
                                 value={summary.running}
                                 max={summary.total}
-                                className="mt-3"
+                                tone="ok"
                             />
                         </div>
-                        <p className="text-sm text-muted-foreground">
-                            {summary.stopped} stopped · {summary.projects}{' '}
-                            {summary.projects === 1 ? 'project' : 'projects'}
+                        <p className="mt-auto flex gap-4 pt-4 text-xs text-muted-foreground">
+                            <span>
+                                <span className="text-foreground">
+                                    {summary.stopped}
+                                </span>{' '}
+                                stopped
+                            </span>
+                            <span>
+                                <span className="text-foreground">
+                                    {summary.projects}
+                                </span>{' '}
+                                {summary.projects === 1
+                                    ? 'project'
+                                    : 'projects'}
+                            </span>
                         </p>
                     </StatCard>
 
@@ -1010,379 +1401,107 @@ export default function Dashboard({
                         </Deferred>
                     </StatCard>
 
-                    <StatCard icon={Network} title="Ports">
-                        <div>
-                            <p className="text-3xl font-semibold tabular-nums">
-                                {summary.ports}
-                                <span className="text-lg font-normal text-muted-foreground">
-                                    {' '}
-                                    open
-                                </span>
-                            </p>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                                {summary.webApps}{' '}
-                                {summary.webApps === 1 ? 'web app' : 'web apps'}{' '}
-                                reachable in the browser
-                            </p>
-                            {localServers.length > 0 && (
-                                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
-                                    <span>
-                                        {localServers.length} running from the
-                                        terminal:
-                                    </span>
-                                    {localServers.map((server) => (
-                                        <a
-                                            key={server.pid}
-                                            href={server.url}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            title={`php -S ${server.address}${server.path ? ` · ${server.path}` : ''} (PID ${server.pid})`}
-                                            className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground hover:underline"
-                                        >
-                                            {server.name ?? server.address}
-                                            <span className="text-muted-foreground">
-                                                :
-                                                {server.address
-                                                    .split(':')
-                                                    .pop()}
-                                            </span>
-                                        </a>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                        {host && (
-                            <p className="text-sm text-muted-foreground">
-                                {host.os} {host.version} · {host.cpus} CPUs ·{' '}
-                                {formatBytes(host.memory)} · {host.images}{' '}
-                                images
-                            </p>
-                        )}
-                    </StatCard>
+                    <PortsCard
+                        ports={summary.ports}
+                        webApps={summary.webApps}
+                        localServers={localServers}
+                    />
 
                     <CaddyCard caddy={caddy} />
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                    <div className="relative w-full max-w-sm">
-                        <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                            type="search"
-                            value={search}
-                            onChange={(event) => setSearch(event.target.value)}
-                            placeholder="Search containers..."
-                            aria-label="Search containers"
-                            className="pl-9"
-                        />
+
+                <Toolbar
+                    search={search}
+                    onSearch={setSearch}
+                    filter={filter}
+                    onFilter={setFilter}
+                    counts={{
+                        all: summary.total,
+                        running: summary.running,
+                        stopped: summary.stopped,
+                    }}
+                    onAddProject={() => setDialogProject('')}
+                />
+
+                {containers.length === 0 ? (
+                    <div className="rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground">
+                        No containers or projects found. Docker may be
+                        unavailable.
                     </div>
-                    <Button
-                        variant="outline"
-                        onClick={() => setDialogProject('')}
-                    >
-                        <Plus />
-                        Add local project
-                    </Button>
-                </div>
-                <div className="relative min-h-[100vh] flex-1 overflow-x-auto rounded-xl border border-sidebar-border/70 md:min-h-min dark:border-sidebar-border">
-                    {containers.length === 0 ? (
-                        <p className="p-4 text-muted-foreground">
-                            No containers or projects found. Docker may be
-                            unavailable.
-                        </p>
-                    ) : (
-                        <table className="w-full text-left text-sm">
-                            <thead className="border-b border-sidebar-border/70 dark:border-sidebar-border">
-                                <tr className="align-middle">
-                                    <SortableHeader
-                                        column="name"
-                                        sort={sort}
-                                        onSort={toggleSort}
+                ) : (
+                    <>
+                        <div className="space-y-3">
+                            {dockerGroups.length > 0 && (
+                                <div
+                                    className={cn(
+                                        GRID,
+                                        'hidden px-4 text-[11px] font-medium tracking-wide text-muted-foreground uppercase lg:grid',
+                                    )}
+                                >
+                                    <span className="pl-5">Container</span>
+                                    <span>Image</span>
+                                    <span>Status</span>
+                                    <span>Ports</span>
+                                    <span
+                                        className={cn(
+                                            ACTIONS_WIDTH,
+                                            'text-right',
+                                        )}
                                     >
-                                        Name
-                                    </SortableHeader>
-                                    <SortableHeader
-                                        column="image"
-                                        sort={sort}
-                                        onSort={toggleSort}
-                                    >
-                                        Image
-                                    </SortableHeader>
-                                    <SortableHeader
-                                        column="state"
-                                        sort={sort}
-                                        onSort={toggleSort}
-                                    >
-                                        State
-                                    </SortableHeader>
-                                    <th className="p-3 font-medium">Status</th>
-                                    <SortableHeader
-                                        column="ports"
-                                        sort={sort}
-                                        onSort={toggleSort}
-                                    >
-                                        Ports
-                                    </SortableHeader>
-                                    <th className="p-3 text-right font-medium">
                                         Actions
-                                    </th>
-                                </tr>
-                            </thead>
-                            {groups.map(({ group, matches }) => {
-                                const running = group.containers.filter(
-                                    (container) =>
-                                        container.state === 'running',
-                                ).length;
-                                const groupKey =
-                                    group.project ?? STANDALONE_KEY;
-                                const expanded = !collapsed.includes(groupKey);
+                                    </span>
+                                </div>
+                            )}
+                            {dockerGroups.map((group) => {
+                                const key = group.project ?? STANDALONE_KEY;
 
                                 return (
-                                    <tbody
-                                        key={groupKey}
-                                        className={
-                                            matches
-                                                ? undefined
-                                                : 'opacity-40 transition-opacity'
-                                        }
-                                    >
-                                        <tr className="hdark:border-sidebar-border border-b border-sidebar-border/70 bg-muted/50 align-middle hover:bg-muted/60">
-                                            <td
-                                                colSpan={5}
-                                                className="relative p-3 font-semibold"
-                                            >
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        toggleCollapsed(
-                                                            groupKey,
-                                                        )
-                                                    }
-                                                    aria-expanded={expanded}
-                                                    aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group.project ?? 'Standalone'}`}
-                                                    className="mr-1.5 -ml-1 inline-flex size-6 items-center justify-center rounded align-middle text-muted-foreground hover:bg-muted hover:text-foreground"
-                                                >
-                                                    <ChevronRight
-                                                        className={cn(
-                                                            'size-4 transition-transform',
-                                                            expanded &&
-                                                                'rotate-90',
-                                                        )}
-                                                    />
-                                                </button>
-                                                {group.project ? (
-                                                    <EnvironmentLinks
-                                                        details={group.details}
-                                                    >
-                                                        {group.details?.name ??
-                                                            group.project}
-                                                    </EnvironmentLinks>
-                                                ) : (
-                                                    'Standalone'
-                                                )}
-                                                {group.details?.name && (
-                                                    <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">
-                                                        {group.project}
-                                                    </span>
-                                                )}
-                                                <span className="ml-2 font-normal text-muted-foreground">
-                                                    {group.containers.length > 0
-                                                        ? `${running}/${group.containers.length} running`
-                                                        : 'no containers'}
-                                                </span>
-                                                {group.project &&
-                                                    terminals.includes(
-                                                        `project-${group.project}`,
-                                                    ) && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() =>
-                                                                openTerminal(
-                                                                    `${PROJECT_TERMINAL_PREFIX}${group.project}`,
-                                                                )
-                                                            }
-                                                            title="Local terminal session running"
-                                                            aria-label={`Open local terminal for ${group.project}`}
-                                                            className="ml-2 inline-flex align-middle text-green-600 hover:text-green-500 dark:text-green-400"
-                                                        >
-                                                            <SquareTerminal className="size-4" />
-                                                        </button>
-                                                    )}
-                                                {group.project &&
-                                                    group.details?.path && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() =>
-                                                                router.post(
-                                                                    openIde.url(
-                                                                        group.project!,
-                                                                    ),
-                                                                    {},
-                                                                    {
-                                                                        preserveScroll: true,
-                                                                    },
-                                                                )
-                                                            }
-                                                            className="absolute top-1/2 right-3 inline-flex -translate-y-1/2 cursor-pointer items-center gap-1 font-mono text-xs font-normal text-muted-foreground hover:text-foreground hover:underline"
-                                                            title="Open in IDE"
-                                                        >
-                                                            <FolderOpen className="size-3.5" />
-                                                            {group.details.path}
-                                                        </button>
-                                                    )}
-                                            </td>
-                                            <td className="px-3 py-1 text-right">
-                                                {group.project && (
-                                                    <ProjectActions
-                                                        group={group}
-                                                        onEdit={() =>
-                                                            setDialogProject(
-                                                                group.project,
-                                                            )
-                                                        }
-                                                        onTerminal={() =>
-                                                            openTerminal(
-                                                                `${PROJECT_TERMINAL_PREFIX}${group.project}`,
-                                                            )
-                                                        }
-                                                        onDelete={() =>
-                                                            setDeleteProject(
-                                                                group.project,
-                                                            )
-                                                        }
-                                                    />
-                                                )}
-                                            </td>
-                                        </tr>
-                                        {expanded &&
-                                            group.containers.length === 0 && (
-                                                <tr className="border-b border-sidebar-border/70 dark:border-sidebar-border">
-                                                    <td
-                                                        colSpan={6}
-                                                        className="p-3 pl-6 text-muted-foreground"
-                                                    >
-                                                        Local project, not
-                                                        running in Docker.
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        {expanded &&
-                                            group.containers.map(
-                                                (container) => (
-                                                    <tr
-                                                        key={container.id}
-                                                        className="border-b border-sidebar-border/70 align-middle hover:bg-muted/10 dark:border-sidebar-border"
-                                                    >
-                                                        <td className="p-3 pl-6 font-medium">
-                                                            {container.service ??
-                                                                container.name}
-                                                            {container.service && (
-                                                                <span className="ml-2 font-normal text-muted-foreground">
-                                                                    {
-                                                                        container.name
-                                                                    }
-                                                                </span>
-                                                            )}
-                                                            {terminals.includes(
-                                                                container.id,
-                                                            ) && (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() =>
-                                                                        openTerminal(
-                                                                            container.id,
-                                                                        )
-                                                                    }
-                                                                    title="Terminal session running"
-                                                                    aria-label={`Open terminal for ${container.name}`}
-                                                                    className="ml-2 inline-flex align-middle text-green-600 hover:text-green-500 dark:text-green-400"
-                                                                >
-                                                                    <SquareTerminal className="size-4" />
-                                                                </button>
-                                                            )}
-                                                        </td>
-                                                        <td className="p-3">
-                                                            {container.image}
-                                                        </td>
-                                                        <td className="p-3">
-                                                            <span
-                                                                className={
-                                                                    container.state ===
-                                                                    'running'
-                                                                        ? 'text-green-600 dark:text-green-400'
-                                                                        : 'text-muted-foreground'
-                                                                }
-                                                            >
-                                                                {
-                                                                    container.state
-                                                                }
-                                                            </span>
-                                                        </td>
-                                                        <td className="p-3">
-                                                            {container.status}
-                                                        </td>
-                                                        <td className="p-3">
-                                                            {container.ports
-                                                                .length ===
-                                                            0 ? (
-                                                                '—'
-                                                            ) : (
-                                                                <div className="flex flex-col gap-1">
-                                                                    {container.ports.map(
-                                                                        (
-                                                                            port,
-                                                                        ) =>
-                                                                            port.url ? (
-                                                                                <a
-                                                                                    key={
-                                                                                        port.label
-                                                                                    }
-                                                                                    href={
-                                                                                        port.url
-                                                                                    }
-                                                                                    target="_blank"
-                                                                                    rel="noopener noreferrer"
-                                                                                    className="text-blue-600 underline-offset-4 hover:underline dark:text-blue-400"
-                                                                                >
-                                                                                    {port.url.replace(
-                                                                                        /^https?:\/\//,
-                                                                                        '',
-                                                                                    )}
-                                                                                </a>
-                                                                            ) : (
-                                                                                <span
-                                                                                    key={
-                                                                                        port.label
-                                                                                    }
-                                                                                >
-                                                                                    {
-                                                                                        port.label
-                                                                                    }
-                                                                                </span>
-                                                                            ),
-                                                                    )}
-                                                                </div>
-                                                            )}
-                                                        </td>
-                                                        <td className="p-3 text-right">
-                                                            <ContainerActions
-                                                                container={
-                                                                    container
-                                                                }
-                                                                onTerminal={() =>
-                                                                    openTerminal(
-                                                                        container.id,
-                                                                    )
-                                                                }
-                                                            />
-                                                        </td>
-                                                    </tr>
-                                                ),
-                                            )}
-                                    </tbody>
+                                    <ProjectCard
+                                        key={key}
+                                        group={group}
+                                        expanded={!collapsed.includes(key)}
+                                        onToggle={() => toggleCollapsed(key)}
+                                        terminals={terminals}
+                                        onContainerTerminal={openTerminal}
+                                        {...handlersFor(group)}
+                                    />
                                 );
                             })}
-                        </table>
-                    )}
-                </div>
+                            {dockerGroups.length === 0 && (
+                                <div className="rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground">
+                                    {term
+                                        ? `No containers match “${search.trim()}”.`
+                                        : `No ${filter === 'all' ? '' : `${filter} `}containers.`}
+                                </div>
+                            )}
+                        </div>
+
+                        {localGroups.length > 0 && (
+                            <section>
+                                <div className="mb-2 flex items-baseline gap-2">
+                                    <h2 className="text-sm font-semibold">
+                                        Local projects
+                                    </h2>
+                                    <span className="text-xs text-muted-foreground">
+                                        Not running in Docker
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                                    {localGroups.map((group) => (
+                                        <LocalProject
+                                            key={group.project}
+                                            group={group}
+                                            terminalActive={terminals.includes(
+                                                `project-${group.project}`,
+                                            )}
+                                            {...handlersFor(group)}
+                                        />
+                                    ))}
+                                </div>
+                            </section>
+                        )}
+                    </>
+                )}
             </div>
             {dialogProject !== null &&
                 (dialogProject === '' || dialogGroup) && (
@@ -1423,7 +1542,7 @@ export default function Dashboard({
                     onOpenChange={(open) => {
                         if (!open) {
                             openTerminal(null);
-                            // Refresh the session markers in the table.
+                            // Refresh the session markers.
                             router.reload({ only: ['terminals'] });
                         }
                     }}

@@ -54,6 +54,7 @@
         ],
         "dev": [
             "Composer\\Config::disableProcessTimeout",
+            "@php artisan caddy:start",
             "@php artisan dev"
         ],
         "lint": [

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Settings\AboutController;
 use App\Http\Controllers\Settings\DataController;
 use App\Http\Controllers\Settings\IntegrationsController;
 use App\Http\Controllers\Settings\ProfileController;
@@ -33,6 +34,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('settings/data', [DataController::class, 'edit'])->name('data.edit');
     Route::get('settings/data/export', [DataController::class, 'export'])->name('data.export');
     Route::post('settings/data/import', [DataController::class, 'import'])->name('data.import');
+
+    Route::get('settings/about', [AboutController::class, 'show'])->name('about.show');
 });
 
 Route::get('.well-known/passkey-endpoints', function () {

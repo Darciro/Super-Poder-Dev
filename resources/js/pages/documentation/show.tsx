@@ -1,11 +1,12 @@
 import { Head, Link, setLayoutProps } from '@inertiajs/react';
-import { Pencil, Trash2 } from 'lucide-react';
-import { useEffect } from 'react';
+import { FileText, Pencil, Trash2 } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { DocumentHeader } from '@/components/document-header';
 import { Markdown } from '@/components/markdown';
-import { Badge } from '@/components/ui/badge';
+import { TableOfContents, useHeadings } from '@/components/table-of-contents';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import type { DocumentSummary } from '@/pages/documentation/index';
-import { formatDate } from '@/pages/documentation/index';
 import {
     deleteMethod as deletePage,
     edit,
@@ -27,62 +28,77 @@ export default function ShowDocument({
         });
     }, [document.id, document.title]);
 
+    const article = useRef<HTMLElement>(null);
+    const headings = useHeadings(article, document.body);
+    // Wider page to fit the table of contents next to the text.
+    const width = headings.length > 0 ? 'max-w-6xl' : 'max-w-4xl';
+
     return (
         <>
             <Head title={document.title} />
-            <article className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-4 md:p-8">
-                <header className="flex flex-col gap-3 border-b pb-6">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                        <Badge variant="secondary">{document.category}</Badge>
-                        <div className="flex gap-2">
-                            <Button variant="outline" size="sm" asChild>
-                                <Link href={edit(document.id)}>
-                                    <Pencil />
-                                    Edit
-                                </Link>
-                            </Button>
-                            <Button variant="outline" size="sm" asChild>
-                                <Link
-                                    href={deletePage(document.id)}
-                                    className="text-destructive"
-                                >
-                                    <Trash2 />
-                                    Delete
-                                </Link>
-                            </Button>
-                        </div>
-                    </div>
-                    <h1 className="text-3xl font-semibold tracking-tight">
-                        {document.title}
-                    </h1>
-                    <p className="text-sm text-muted-foreground">
-                        Created by {document.author ?? 'a deleted user'} on{' '}
-                        {formatDate(document.created_at)}
-                        {document.updated_at !== document.created_at && (
-                            <>
-                                {' '}
-                                · Last updated {formatDate(document.updated_at)}
-                                {document.editor && <> by {document.editor}</>}
-                            </>
-                        )}
-                    </p>
-                </header>
-
-                {document.body?.trim() ? (
-                    <Markdown>{document.body}</Markdown>
-                ) : (
-                    <p className="text-muted-foreground">
-                        This page is empty.{' '}
-                        <Link
-                            href={edit(document.id)}
-                            className="text-foreground underline underline-offset-4"
+            <DocumentHeader
+                document={document}
+                className={width}
+                actions={
+                    <>
+                        <Button variant="outline" size="sm" asChild>
+                            <Link href={edit(document.id)}>
+                                <Pencil />
+                                Edit
+                            </Link>
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            asChild
+                            className="hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-300"
                         >
-                            Start writing
-                        </Link>
-                        .
-                    </p>
+                            <Link href={deletePage(document.id)}>
+                                <Trash2 />
+                                Delete
+                            </Link>
+                        </Button>
+                    </>
+                }
+            />
+            <div
+                className={cn(
+                    'mx-auto grid w-full gap-6 p-4 sm:p-6',
+                    width,
+                    headings.length > 0 && 'lg:grid-cols-[minmax(0,1fr)_15rem]',
                 )}
-            </article>
+            >
+                {document.body?.trim() ? (
+                    <article
+                        ref={article}
+                        className="min-w-0 rounded-xl border bg-card p-6 sm:p-8"
+                    >
+                        {/* Headings stop below the app header and the sticky document header. */}
+                        <Markdown className="prose-headings:scroll-mt-40">
+                            {document.body}
+                        </Markdown>
+                    </article>
+                ) : (
+                    <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground">
+                        <FileText className="size-8" />
+                        <p>This page is empty.</p>
+                        <Button variant="outline" size="sm" asChild>
+                            <Link href={edit(document.id)}>
+                                <Pencil />
+                                Start writing
+                            </Link>
+                        </Button>
+                    </div>
+                )}
+                {headings.length > 0 && (
+                    <aside className="hidden lg:block">
+                        <TableOfContents
+                            headings={headings}
+                            className="sticky top-38 group-has-data-[collapsible=icon]/sidebar-wrapper:top-34"
+                        />
+                    </aside>
+                )}
+            </div>
         </>
     );
 }

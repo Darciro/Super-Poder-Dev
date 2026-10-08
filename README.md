@@ -14,7 +14,7 @@ It runs as a regular Laravel app in the browser, and as a native macOS desktop a
     - Open a terminal in the project's folder.
 - **Terminals** in the browser (xterm.js): a shell inside any container, or a local shell in a project's folder. Sessions keep running when the terminal is closed and are replayed when it's reopened.
 - **Local PHP servers**: apps served with `php -S` / `php artisan serve` from any terminal, with their URL and folder.
-- **Caddy**: the sites of your Caddyfile with their upstreams, and whether Caddy runs. Start it (it asks for your password, since ports 80/443 need root) and stop it.
+- **Caddy**: the sites of your Caddyfile with their upstreams, and whether Caddy runs. Start it and stop it. It runs as your user: macOS lets any user listen on ports 80/443, so no password is needed.
 
 ### Documentation
 
@@ -96,11 +96,18 @@ super-poder-dev.test:5173 {
 }
 ```
 
-Then start Caddy, and trust its local certificate authority once:
+Then start Caddy, and trust its local certificate authority once (this asks for your password):
 
 ```bash
-sudo caddy start --config ~/caddy/Caddyfile
-sudo caddy trust
+caddy start --config ~/caddy/Caddyfile
+caddy trust
+```
+
+Caddy runs as your user, without `sudo`. If it ran as root before, its data folder belongs to root: stop it and give the folder back to your user once:
+
+```bash
+caddy stop
+sudo chown -R "$(whoami)" ~/Library/Application\ Support/Caddy
 ```
 
 ### 3. Start the app
