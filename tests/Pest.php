@@ -44,7 +44,13 @@ expect()->extend('toBeOne', function () {
 |
 */
 
-function something()
+/**
+ * Run the requests as the desktop app's window: NativePHP running, and the secret it
+ * hands its window (requests without it are rejected).
+ */
+function inDesktopApp(bool $desktop = true): void
 {
-    // ..
+    config(['nativephp-internal.running' => $desktop, 'nativephp-internal.secret' => 'window-secret']);
+
+    test()->withHeader('X-NativePHP-Secret', 'window-secret');
 }

@@ -6,6 +6,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
+use Native\Desktop\Facades\ChildProcess;
 use Symfony\Component\Process\PhpExecutableFinder;
 
 /**
@@ -13,12 +14,18 @@ use Symfony\Component\Process\PhpExecutableFinder;
  * or on this machine in a project's folder.
  *
  * Each session is a background `terminal:run` process that keeps the TTY open,
- * independent of any HTTP request. It exchanges data through files:
+ * independent of any HTTP request. In the desktop app it's a child process of the app,
+ * so quitting the app ends it. It exchanges data through files:
  *
  *  - output.log: everything the shell printed (replayed when the terminal reopens)
  *  - input.log:  keystrokes, appended by the browser and consumed by the process
  *  - session.json: id, target, pid and size of the session
  *  - runtime.json: details only known once the shell runs (Docker exec id, local tty)
+ *  - running.lock: locked by the process while it runs (the lock goes away with it)
+ *  - stop: created to ask the process to end the session
+ *
+ * No signals are involved, so it works without the pcntl and posix extensions
+ * (the PHP binary bundled with the desktop app has neither).
  */
 class TerminalSessions
 {
@@ -31,6 +38,11 @@ class TerminalSessions
      * Maximum output returned by a single read.
      */
     private const CHUNK_BYTES = 256 * 1024;
+
+    /**
+     * How long start() waits for the background process to take over the session.
+     */
+    private const START_TIMEOUT_MS = 5000;
 
     public function __construct(private Docker $docker) {}
 
@@ -57,7 +69,7 @@ class TerminalSessions
                 return;
             }
 
-            foreach (['output.log', 'input.log', 'runtime.json'] as $file) {
+            foreach (['output.log', 'input.log', 'runtime.json', 'stop'] as $file) {
                 File::delete($this->path($key, $file));
             }
 
@@ -76,22 +88,14 @@ class TerminalSessions
 
             $this->writeSession($key, $session);
 
-            // Close every inherited descriptor (e.g. the HTTP connection of this request),
-            // otherwise the request would only finish when the session ends.
-            $closeInherited = collect(range(3, 255))->map(fn (int $fd) => "{$fd}>&-")->implode(' ');
+            if (config('nativephp-internal.running')) {
+                $this->spawnInDesktopApp($key);
+            } else {
+                $this->writeSession($key, [...$session, 'pid' => $this->spawnDetached($key)]);
+            }
 
-            $command = sprintf(
-                'nohup %s artisan terminal:run %s < /dev/null > /dev/null 2>&1 %s & echo $!',
-                escapeshellarg((new PhpExecutableFinder)->find(false) ?: 'php'),
-                escapeshellarg($key),
-                $closeInherited,
-            );
-
-            // Under `php artisan serve` child processes get an almost empty environment
-            // (no HOME, so no Docker socket): hand over the real one.
-            $pid = (int) trim(Process::path(base_path())->env(getenv())->run($command)->output());
-
-            $this->writeSession($key, [...$session, 'pid' => $pid]);
+            // Return once the session runs, so the terminal doesn't see it as ended meanwhile.
+            $this->waitUntilRunning($key);
         } finally {
             flock($lock, LOCK_UN);
             fclose($lock);
@@ -170,23 +174,68 @@ class TerminalSessions
     }
 
     /**
-     * End the session (kills the shell and everything started from it).
+     * End the session (hangs up the shell and everything started from it).
      */
     public function stop(string $key): void
     {
-        $pid = $this->session($key)['pid'] ?? null;
-
-        if ($pid && $this->isRunning($key)) {
-            posix_kill($pid, SIGTERM);
+        if ($this->isRunning($key)) {
+            File::put($this->path($key, 'stop'), '');
         }
+    }
+
+    public function stopRequested(string $key): bool
+    {
+        $path = $this->path($key, 'stop');
+
+        clearstatcache(true, $path);
+
+        return file_exists($path);
+    }
+
+    /**
+     * Mark the session as running for as long as the returned handle stays open
+     * (closed explicitly or when the process ends, however it ends).
+     *
+     * @return resource|null Null when another process already runs the session.
+     */
+    public function claim(string $key)
+    {
+        File::ensureDirectoryExists($this->path($key));
+
+        // "e": close on exec, so the shells this process starts don't inherit the lock.
+        $lock = fopen($this->path($key, 'running.lock'), 'ce');
+
+        if ($lock === false || ! flock($lock, LOCK_EX | LOCK_NB)) {
+            return null;
+        }
+
+        return $lock;
     }
 
     public function isRunning(string $key): bool
     {
-        $pid = $this->session($key)['pid'] ?? null;
+        $path = $this->path($key, 'running.lock');
 
-        // Signal 0 only checks that the process exists.
-        return $pid > 0 && posix_kill($pid, 0);
+        if (! file_exists($path)) {
+            return false;
+        }
+
+        $lock = fopen($path, 'r');
+
+        if ($lock === false) {
+            return false;
+        }
+
+        // Locked by the session's process while it runs.
+        $running = ! flock($lock, LOCK_SH | LOCK_NB);
+
+        if (! $running) {
+            flock($lock, LOCK_UN);
+        }
+
+        fclose($lock);
+
+        return $running;
     }
 
     /**
@@ -238,6 +287,46 @@ class TerminalSessions
         File::ensureDirectoryExists($directory);
 
         return collect([$directory, $key, $file])->filter()->implode('/');
+    }
+
+    /**
+     * Run the session as a child process of the desktop app: when the app quits, it
+     * ends the session along with everything started from the shell.
+     */
+    private function spawnInDesktopApp(string $key): void
+    {
+        ChildProcess::artisan(['terminal:run', $key], alias: "terminal-{$key}");
+    }
+
+    /**
+     * Run the session on its own, so it survives the dev server restarting
+     * (Ctrl+C on `composer dev`): `&` makes the shell ignore SIGINT, `nohup` SIGHUP.
+     *
+     * @return int The pid of the process.
+     */
+    private function spawnDetached(string $key): int
+    {
+        // Close every inherited descriptor (e.g. the HTTP connection of this request),
+        // otherwise the request would only finish when the session ends.
+        $closeInherited = collect(range(3, 255))->map(fn (int $fd) => "{$fd}>&-")->implode(' ');
+
+        $command = sprintf(
+            'nohup %s artisan terminal:run %s < /dev/null > /dev/null 2>&1 %s & echo $!',
+            escapeshellarg((new PhpExecutableFinder)->find(false) ?: 'php'),
+            escapeshellarg($key),
+            $closeInherited,
+        );
+
+        // Under `php artisan serve` child processes get an almost empty environment
+        // (no HOME, so no Docker socket): hand over the real one.
+        return (int) trim(Process::path(base_path())->env(getenv())->run($command)->output());
+    }
+
+    private function waitUntilRunning(string $key): void
+    {
+        for ($waited = 0; $waited < self::START_TIMEOUT_MS && ! $this->isRunning($key); $waited += 20) {
+            usleep(20_000);
+        }
     }
 
     /**

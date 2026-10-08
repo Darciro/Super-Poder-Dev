@@ -4,7 +4,9 @@ use App\Models\Project;
 use App\Models\User;
 use App\Services\TerminalSessions;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Process;
 use Mockery\MockInterface;
+use Native\Desktop\Facades\ChildProcess;
 
 test('guests cannot use terminals', function () {
     $this->postJson(route('dashboard.containers.terminal.store', 'abc123'), ['cols' => 80, 'rows' => 24])
@@ -154,4 +156,96 @@ test('project terminal routes only accept project names', function () {
     $this->actingAs(User::factory()->create())
         ->postJson('/dashboard/projects/..%2Fetc/terminal', ['cols' => 80, 'rows' => 24])
         ->assertNotFound();
+});
+
+test('a session runs while its process holds the claim', function () {
+    $sessions = app(TerminalSessions::class);
+    $key = 'test'.bin2hex(random_bytes(4));
+
+    try {
+        expect($sessions->isRunning($key))->toBeFalse();
+
+        $lock = $sessions->claim($key);
+
+        expect($lock)->not->toBeNull()
+            ->and($sessions->isRunning($key))->toBeTrue()
+            ->and($sessions->active())->toContain($key);
+
+        fclose($lock);
+
+        expect($sessions->isRunning($key))->toBeFalse();
+    } finally {
+        File::deleteDirectory($sessions->path($key));
+    }
+});
+
+test('stopping asks a running session to end', function () {
+    $sessions = app(TerminalSessions::class);
+    $key = 'test'.bin2hex(random_bytes(4));
+
+    try {
+        // Nothing to stop: no request is left behind for a later session.
+        $sessions->stop($key);
+
+        expect($sessions->stopRequested($key))->toBeFalse();
+
+        $lock = $sessions->claim($key);
+        $sessions->stop($key);
+
+        expect($sessions->stopRequested($key))->toBeTrue();
+
+        fclose($lock);
+    } finally {
+        File::deleteDirectory($sessions->path($key));
+    }
+});
+
+test('in the desktop app a session runs as a child process of the app', function () {
+    inDesktopApp();
+    Process::fake();
+    $sessions = app(TerminalSessions::class);
+    $key = 'project-test'.bin2hex(random_bytes(4));
+    $lock = null;
+
+    // The started process takes the session over, as terminal:run does.
+    ChildProcess::shouldReceive('artisan')
+        ->once()
+        ->with(['terminal:run', $key], "terminal-{$key}")
+        ->andReturnUsing(function () use ($sessions, $key, &$lock) {
+            $lock = $sessions->claim($key);
+
+            return Mockery::mock(Native\Desktop\ChildProcess::class);
+        });
+
+    try {
+        $sessions->start($key, ['type' => 'local', 'cwd' => '/tmp'], 80, 24);
+
+        expect($sessions->isRunning($key))->toBeTrue();
+        Process::assertNothingRan();
+    } finally {
+        $lock && fclose($lock);
+        File::deleteDirectory($sessions->path($key));
+    }
+});
+
+test('in a browser a session runs on its own, surviving the dev server', function () {
+    $sessions = app(TerminalSessions::class);
+    $key = 'project-test'.bin2hex(random_bytes(4));
+    $lock = null;
+
+    Process::fake(function () use ($sessions, $key, &$lock) {
+        $lock = $sessions->claim($key);
+
+        return Process::result('4242');
+    });
+
+    try {
+        $sessions->start($key, ['type' => 'local', 'cwd' => '/tmp'], 80, 24);
+
+        Process::assertRan(fn ($process) => str_starts_with($process->command, 'nohup ') && str_contains($process->command, "terminal:run '{$key}'"));
+        expect($sessions->session($key)['pid'])->toBe(4242);
+    } finally {
+        $lock && fclose($lock);
+        File::deleteDirectory($sessions->path($key));
+    }
 });

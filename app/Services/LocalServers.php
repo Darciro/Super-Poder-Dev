@@ -24,9 +24,19 @@ class LocalServers
         return collect(explode("\n", $result->output()))
             ->map(fn (string $line) => $this->parse($line))
             ->filter()
+            ->reject(fn (array $server) => $this->isThisApp($server['pid']))
             ->sortBy(fn (array $server) => (int) substr(strrchr($server['address'], ':') ?: '', 1))
             ->values()
             ->all();
+    }
+
+    /**
+     * The desktop app is itself served by `php -S` (a single process, which handles
+     * this request too): not one of the user's apps.
+     */
+    private function isThisApp(int $pid): bool
+    {
+        return config('nativephp-internal.running') && $pid === getmypid();
     }
 
     /**

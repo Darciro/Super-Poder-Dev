@@ -10,9 +10,11 @@ use Illuminate\Support\Facades\Http;
  */
 class Docker
 {
+    public function __construct(private IntegrationSettings $settings) {}
+
     public function socket(): string
     {
-        return config('services.docker.socket');
+        return $this->settings->get('docker_socket');
     }
 
     /**

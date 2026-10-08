@@ -22,7 +22,7 @@ export default function Profile({
     mustVerifyEmail: boolean;
     status?: string;
 }) {
-    const { auth } = usePage<PageProps>().props;
+    const { auth, desktop } = usePage<PageProps>().props;
 
     return (
         <>
@@ -123,7 +123,8 @@ export default function Profile({
                 </Form>
             </div>
 
-            <DeleteUser />
+            {/* The desktop app's only user: it would be created again on the next request. */}
+            {!desktop && <DeleteUser />}
         </>
     );
 }

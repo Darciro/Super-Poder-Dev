@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Services\Docker;
+use App\Services\ShellEnvironment;
 use App\Services\TerminalSessions;
 use Illuminate\Console\Command;
 use Illuminate\Http\Client\ConnectionException;
@@ -13,7 +14,11 @@ use Illuminate\Http\Client\ConnectionException;
  * Opens an interactive shell with a TTY — through `docker exec` for a container, or a
  * local pty in a project's folder — and pipes it to the session files: shell output is
  * appended to output.log and keystrokes are read from input.log.
- * Started by TerminalSessions::start(), it runs until the shell exits or it receives SIGTERM.
+ * Started by TerminalSessions::start(), it runs until the shell exits or the session is
+ * stopped from the dashboard.
+ *
+ * Doesn't use the pcntl and posix extensions: the PHP binary bundled with the desktop
+ * app has neither.
  */
 class TerminalRunCommand extends Command
 {
@@ -23,27 +28,15 @@ class TerminalRunCommand extends Command
     private const SHELL_PID_FILE = '/tmp/.dashboard-terminal.pid';
 
     /**
-     * Environment variables a local shell inherits. Everything else is left out, in
-     * particular this app's .env values, which would override the project's own .env.
+     * Signal numbers (the SIG* constants come with the pcntl extension).
      */
-    private const LOCAL_ENV = ['HOME', 'USER', 'LOGNAME', 'SHELL', 'PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR', 'SSH_AUTH_SOCK'];
+    private const SIGNALS = ['HUP' => 1, 'KILL' => 9];
 
     /**
-     * Runs in the pty before the local shell (args: tty file, rows, cols, shell).
-     *
-     * PHP's pty doesn't become the shell's controlling terminal, which breaks Ctrl+C and
-     * job control. A new session leader opening its tty acquires it, so do that, record
-     * the tty name (to resize it later), apply the size and become the user's login shell.
+     * Runs in the pty before the local shell (args: tty file, rows, cols, shell): records
+     * the tty name (to resize it later), applies the size and becomes the login shell.
      */
-    private const LOCAL_SHELL_WRAPPER = <<<'PHP'
-        [, $ttyFile, $rows, $cols, $shell] = $argv;
-        posix_setsid();
-        $tty = posix_ttyname(STDIN);
-        $controlling = fopen($tty, 'r+');
-        file_put_contents($ttyFile, $tty."\n");
-        exec('/bin/stty rows '.(int) $rows.' cols '.(int) $cols);
-        pcntl_exec($shell, ['-l'], getenv());
-        PHP;
+    private const LOCAL_SHELL_WRAPPER = 'tty > "$1"; stty rows "$2" cols "$3"; exec "$4" -l';
 
     protected $signature = 'terminal:run {session}';
 
@@ -53,22 +46,24 @@ class TerminalRunCommand extends Command
 
     private bool $running = true;
 
-    public function handle(Docker $docker, TerminalSessions $sessions): int
+    public function handle(Docker $docker, TerminalSessions $sessions, ShellEnvironment $environment): int
     {
         $key = $this->argument('session');
         $session = $sessions->session($key);
 
-        $this->detach();
+        // Held until this process ends: the session runs while it's locked.
+        $lock = $sessions->claim($key);
 
-        $output = fopen($sessions->path($key, 'output.log'), 'ab');
+        // "e": the shell must not inherit it (its output goes through the pty).
+        $output = fopen($sessions->path($key, 'output.log'), 'abe');
 
-        if ($output === false || $session === null) {
+        if ($lock === null || $output === false || $session === null) {
             return self::FAILURE;
         }
 
         try {
             $shell = $session['target']['type'] === 'local'
-                ? $this->openLocal($sessions, $key, $session['target']['cwd'], $session['cols'], $session['rows'])
+                ? $this->openLocal($sessions, $environment, $key, $session['target']['cwd'], $session['cols'], $session['rows'])
                 : $this->openContainer($docker, $sessions, $key, $session['target']['container']);
         } catch (\RuntimeException $e) {
             fwrite($output, "\r\n\e[31m{$e->getMessage()}\e[0m\r\n");
@@ -77,7 +72,7 @@ class TerminalRunCommand extends Command
             return self::FAILURE;
         }
 
-        $this->pipe($shell['read'], $shell['write'], $shell['alive'], $output, $sessions->path($key, 'input.log'));
+        $this->pipe($shell['read'], $shell['write'], $shell['alive'], $output, $sessions->path($key, 'input.log'), fn () => $sessions->stopRequested($key));
 
         // Stopped from the dashboard: hang up the shell like closing a real terminal,
         // so it forwards SIGHUP to its jobs (e.g. `php artisan serve`) and exits.
@@ -91,20 +86,6 @@ class TerminalRunCommand extends Command
         fclose($output);
 
         return self::SUCCESS;
-    }
-
-    /**
-     * Keep running on its own: survive the dev server restarting (Ctrl+C on `composer dev`)
-     * and end cleanly when the session is stopped from the dashboard.
-     */
-    private function detach(): void
-    {
-        posix_setsid();
-
-        pcntl_async_signals(true);
-        pcntl_signal(SIGINT, SIG_IGN);
-        pcntl_signal(SIGHUP, SIG_IGN);
-        pcntl_signal(SIGTERM, fn () => $this->running = false);
     }
 
     /**
@@ -137,19 +118,24 @@ class TerminalRunCommand extends Command
     /**
      * Login shell on this machine, in the project's folder.
      *
+     * PHP's own pty doesn't become the shell's controlling terminal, which breaks Ctrl+C
+     * and job control. script(1) gives the shell a pty that is: it runs it as the leader
+     * of a new session on the pty, and copies data between the pty and our pipes.
+     *
      * @return array{read: resource, write: resource, alive: \Closure(): bool, hangUp: \Closure(): void, close: \Closure(): void}
      */
-    private function openLocal(TerminalSessions $sessions, string $key, string $cwd, int $cols, int $rows): array
+    private function openLocal(TerminalSessions $sessions, ShellEnvironment $environment, string $key, string $cwd, int $cols, int $rows): array
     {
         $home = getenv('HOME') ?: '/';
         $ttyFile = $sessions->path($key, 'tty');
 
         $process = proc_open(
-            [PHP_BINARY, '-r', self::LOCAL_SHELL_WRAPPER, '--', $ttyFile, (string) $rows, (string) $cols, getenv('SHELL') ?: '/bin/zsh'],
-            [['pty'], ['pty'], ['pty']],
+            ['/usr/bin/script', '-q', '/dev/null', '/bin/sh', '-c', self::LOCAL_SHELL_WRAPPER, 'sh', $ttyFile, (string) $rows, (string) $cols, getenv('SHELL') ?: '/bin/zsh'],
+            [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']],
             $pipes,
             is_dir($cwd) ? $cwd : $home,
-            $this->localEnvironment(),
+            // Only the user's variables: this app's .env values would override the project's own.
+            [...$environment->variables(), 'TERM' => 'xterm-256color', 'COLORTERM' => 'truecolor'],
         );
 
         if ($process === false) {
@@ -159,7 +145,7 @@ class TerminalRunCommand extends Command
         $pid = proc_get_status($process)['pid'];
         $tty = $this->waitForFile($ttyFile);
 
-        $sessions->setRuntime($key, array_filter(['tty' => $tty, 'shell_pid' => $pid]));
+        $sessions->setRuntime($key, array_filter(['tty' => $tty, 'script_pid' => $pid]));
         @unlink($ttyFile);
 
         stream_set_blocking($pipes[1], false);
@@ -168,7 +154,7 @@ class TerminalRunCommand extends Command
             'read' => $pipes[1],
             'write' => $pipes[0],
             'alive' => fn () => proc_get_status($process)['running'],
-            'hangUp' => fn () => $this->hangUpLocalShell($process, $pid, $tty),
+            'hangUp' => fn () => $this->hangUpLocalShell($process, $tty),
             'close' => function () use ($process, $pipes) {
                 foreach ($pipes as $pipe) {
                     fclose($pipe);
@@ -185,14 +171,15 @@ class TerminalRunCommand extends Command
      *
      * @param  resource  $process
      */
-    private function hangUpLocalShell($process, int $pid, ?string $tty): void
+    private function hangUpLocalShell($process, ?string $tty): void
     {
-        $signal = function (string $name) use ($pid, $tty) {
+        $signal = function (string $name) use ($process, $tty) {
             if ($tty !== null) {
                 exec('/usr/bin/pkill -'.$name.' -t '.escapeshellarg(basename($tty)));
             }
 
-            posix_kill($pid, constant('SIG'.$name));
+            // script(1) itself: it exits along with the shell anyway.
+            proc_terminate($process, self::SIGNALS[$name]);
         };
 
         $signal('HUP');
@@ -203,18 +190,6 @@ class TerminalRunCommand extends Command
         }
 
         $signal('KILL');
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private function localEnvironment(): array
-    {
-        return collect(self::LOCAL_ENV)
-            ->mapWithKeys(fn (string $name) => [$name => getenv($name)])
-            ->filter(fn (string|false $value) => is_string($value) && $value !== '')
-            ->merge(['TERM' => 'xterm-256color', 'COLORTERM' => 'truecolor'])
-            ->all();
     }
 
     private function waitForFile(string $path): ?string
@@ -323,12 +298,19 @@ class TerminalRunCommand extends Command
      * @param  resource  $write
      * @param  \Closure(): bool  $alive
      * @param  resource  $output
+     * @param  \Closure(): bool  $stopRequested
      */
-    private function pipe($read, $write, \Closure $alive, $output, string $inputPath): void
+    private function pipe($read, $write, \Closure $alive, $output, string $inputPath, \Closure $stopRequested): void
     {
         $inputOffset = 0;
 
         while ($this->running) {
+            if ($stopRequested()) {
+                $this->running = false;
+
+                return;
+            }
+
             $readable = [$read];
             $none = null;
             $except = null;

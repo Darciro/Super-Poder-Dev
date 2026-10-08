@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Project;
+use App\Native\StatusMenu;
 use App\Services\Caddy;
 use App\Services\Docker;
 use App\Services\LocalServers;
@@ -65,6 +66,8 @@ class DashboardController extends Controller
 
         $past = ['start' => 'started', 'stop' => 'stopped', 'restart' => 'restarted'][$action];
 
+        $this->refreshStatusMenu();
+
         Inertia::flash('toast', ['type' => 'success', 'message' => "Container {$past}."]);
 
         return back();
@@ -81,7 +84,19 @@ class DashboardController extends Controller
             Inertia::flash('toast', ['type' => 'error', 'message' => "Failed to {$action} Caddy."]);
         }
 
+        $this->refreshStatusMenu();
+
         return back();
+    }
+
+    /**
+     * The desktop app's menu bar icon shows the status of Caddy and the containers.
+     */
+    private function refreshStatusMenu(): void
+    {
+        if (config('nativephp-internal.running')) {
+            defer(fn () => app(StatusMenu::class)->refresh());
+        }
     }
 
     /**

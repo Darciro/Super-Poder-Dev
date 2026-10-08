@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- macOS template image: black and transparency only, the system colors it. -->
+  <defs>
+    <mask id="bolt">
+      <rect width="100" height="100" fill="#FFFFFF"/>
+      <polygon points="52,22 63,22 55,43 64,43 43,80 48,55 38,55" fill="#000000"/>
+    </mask>
+  </defs>
+  <path d="M50 4 L92 16 L88 58 Q84 80 50 96 Q16 80 12 58 L8 16 Z" fill="#000000" mask="url(#bolt)"/>
+</svg>
